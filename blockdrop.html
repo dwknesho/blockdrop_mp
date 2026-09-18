@@ -1,0 +1,1066 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BlockDrop</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+/* ---------- Theme tokens ---------- */
+/* Black theme in both light and dark mode */
+:root{
+  --bg:#000000; --panel:#0d0d0d; --text:#ededed; --muted:#8a8a8a; --border:#262626;
+  --board:#000000; --grid:#161616; --frame:#3a3a3a; --accent:#ffc93c; --accent-ink:#111111;
+  --overlay:rgba(0,0,0,.85); --danger:#ff5a6a;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){ --bg:#000000; } }
+:root[data-theme="dark"]{ --bg:#000000; }
+
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);min-height:100vh;
+  font-family:'Chakra Petch',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}
+.wrap{max-width:920px;margin:0 auto;padding:14px 16px 32px;display:flex;flex-direction:column;align-items:center;gap:14px}
+/* A 1v1 match needs room for two full boards side by side (~1200px) —
+   the default max-width was sized for a single board and was forcing the
+   opponent's panel to wrap onto its own row below instead of beside yours. */
+.wrap.mp1v1{max-width:1300px}
+.wrap.mp1v1 .boardWrap{height:min(70vh,560px)}
+header{width:100%;max-width:640px;display:flex;justify-content:space-between;align-items:center}
+h1{margin:0;font-size:1.5rem;font-weight:700;letter-spacing:.02em}
+.btn{font:inherit;font-weight:600;font-size:.95rem;border:1px solid var(--border);background:var(--panel);color:var(--text);
+  padding:8px 14px;border-radius:8px;cursor:pointer}
+.btn:hover{border-color:var(--muted)}
+.btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+
+.game{display:flex;gap:14px;align-items:flex-start;justify-content:center;max-width:100%}
+.side{width:132px;display:flex;flex-direction:column;gap:12px;flex-shrink:0}
+.box{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:8px 10px}
+.label{font-size:.85rem;font-weight:600;color:var(--muted);margin-bottom:4px}
+.box canvas{display:block;width:100%;height:auto}
+.note{font-size:.82rem;color:var(--muted);line-height:1.7}
+.note[hidden]{display:none}
+.stats .row{display:flex;justify-content:space-between;align-items:baseline;font-size:.88rem;padding:3px 0;color:var(--muted)}
+.stats .v{font-weight:700;color:var(--text);font-variant-numeric:tabular-nums}
+
+.boardWrap{position:relative;height:min(82vh,660px);aspect-ratio:300/660;flex-shrink:0}
+#board{width:100%;height:100%;display:block}
+.overlay{position:absolute;left:0;right:0;top:9.0909%;bottom:0;background:var(--overlay);color:#f2f4fa;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;padding:18px}
+.overlay.hidden{display:none}
+.overlay .title{font-size:2.1rem;font-weight:700;line-height:1}
+.overlay .title small{display:block;font-size:.9rem;font-weight:400;color:#aab3cf;margin-top:8px}
+.overlay .count{font-size:4.5rem;font-weight:700;color:var(--accent)}
+.overlay .res{font-size:1rem;line-height:1.7;color:#cfd5e8}
+.overlay .res b{color:#fff}
+.overlay .bigtime{font-size:2.4rem;font-weight:700;color:var(--accent);font-variant-numeric:tabular-nums}
+.overlay .modes{display:flex;flex-direction:column;gap:8px;width:80%}
+.overlay .hint{font-size:.82rem;color:#98a2c2;line-height:1.6}
+
+.action{min-height:96px;text-align:right;font-weight:700;opacity:0;line-height:1.25}
+.action .b2b{color:var(--accent);font-size:.85rem}
+.action .nm{font-size:1.05rem}
+.action .nm.big{font-size:1.35rem}
+.action .cb{color:var(--muted);font-size:.95rem}
+.action .pc{color:var(--accent);font-size:1.2rem}
+.action.show{animation:pop 1.6s forwards}
+@keyframes pop{0%{opacity:0;transform:translateX(-6px)}8%{opacity:1;transform:none}75%{opacity:1}100%{opacity:0}}
+
+.help{max-width:640px;width:100%;display:flex;flex-wrap:wrap;gap:6px 18px;justify-content:center;font-size:.85rem;color:var(--muted)}
+.help span{white-space:nowrap}
+kbd{font:inherit;font-size:.78rem;font-weight:600;background:var(--panel);border:1px solid var(--border);border-bottom-width:2px;
+  border-radius:5px;padding:1px 6px;color:var(--text)}
+
+.modal{position:fixed;inset:0;background:rgba(8,10,20,.55);display:flex;align-items:center;justify-content:center;padding:16px;z-index:10}
+.modal.hidden{display:none}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:20px 22px;width:min(420px,100%)}
+.card h2{margin:0 0 12px;font-size:1.25rem}
+.setting{margin-bottom:14px}
+.setting .top{display:flex;justify-content:space-between;font-weight:600}
+.setting output{font-variant-numeric:tabular-nums;color:var(--muted)}
+.setting input{width:100%;accent-color:var(--accent)}
+.setting p{margin:2px 0 0;font-size:.82rem;color:var(--muted)}
+.card .actions{display:flex;justify-content:space-between;gap:8px;margin-top:6px}
+
+@media (max-width:620px){ .side{width:96px} .stats .row{font-size:.78rem} }
+@media (prefers-reduced-motion: reduce){ .action.show{animation:none;opacity:1} }
+
+.matchArea{display:flex;flex-direction:column;align-items:center;gap:14px;width:100%}
+.matchArea.versus1v1{flex-direction:row;justify-content:center;align-items:flex-start;flex-wrap:wrap}
+.opponents{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;max-width:640px;width:100%}
+.opponents[hidden]{display:none}
+.matchArea.versus1v1 .opponents{max-width:none;width:auto}
+.opp{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:6px 8px;text-align:center;width:92px}
+.opp .name{font-size:.78rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:4px}
+.opp canvas{display:block;background:#000;border-radius:4px}
+.opp .oppBoard{width:100%;height:auto}
+.opp.gone{opacity:.35}
+.opp .rank{font-size:.72rem;color:var(--accent);font-weight:700}
+/* "big" (1v1) opponent panel reuses the exact same .side/.box/.boardWrap
+   layout and CSS as your own board — same gap, same widths, same height
+   formula — Hold+stats on the left, board in the middle, Next on the
+   right, name below the board. A true mirror, not a smaller lookalike. */
+.opp.big{background:none;border:none;padding:0;width:auto;display:flex;gap:14px;align-items:flex-start}
+.opp.big .oppBoardCol{display:flex;flex-direction:column;align-items:center;gap:6px}
+.opp.big .name{font-size:.85rem;font-weight:600;margin:0}
+.opp.big .rank{font-size:.78rem}
+.opp.big .oppNameRow{display:flex;gap:8px;align-items:baseline}
+.garbageWarn{position:absolute;left:-10px;top:9.0909%;bottom:0;width:7px;display:flex;flex-direction:column;justify-content:flex-end}
+.garbageWarn[hidden]{display:none}
+.garbageWarn .fill{background:var(--danger);width:100%;border-radius:3px;transition:height .15s ease-out}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <header>
+    <h1>BlockDrop</h1>
+    <div style="display:flex;gap:8px">
+      <button class="btn" id="leaveMatchBtn" hidden>Leave match</button>
+      <button class="btn" id="settingsBtn">Settings</button>
+    </div>
+  </header>
+
+  <div class="matchArea" id="matchArea">
+    <div class="game">
+      <aside class="side">
+        <div class="box"><div class="label">Hold</div><canvas id="hold"></canvas></div>
+        <div class="box note" id="practiceNote" hidden>Practice mode<br><kbd>Ctrl</kbd>+<kbd>Z</kbd> undo last piece</div>
+        <div class="action" id="action" aria-live="polite"></div>
+        <div class="box stats">
+          <div class="row"><span>Score</span><span class="v" id="sScore">0</span></div>
+          <div class="row"><span>Level</span><span class="v" id="sLevel">1</span></div>
+          <div class="row"><span>Lines</span><span class="v" id="sLines">0</span></div>
+          <div class="row"><span>Time</span><span class="v" id="sTime">0:00.00</span></div>
+          <div class="row"><span>Pieces/s</span><span class="v" id="sPps">0.00</span></div>
+          <div class="row"><span>Sent</span><span class="v" id="sSent">0</span></div>
+        </div>
+      </aside>
+
+      <div class="boardWrap">
+        <canvas id="board"></canvas>
+        <div class="garbageWarn" id="garbageWarn" hidden><div class="fill" id="garbageFill"></div></div>
+        <div class="overlay" id="overlay"></div>
+      </div>
+
+      <aside class="side">
+        <div class="box"><div class="label">Next</div><canvas id="next"></canvas></div>
+      </aside>
+    </div>
+
+    <div class="opponents" id="opponents" hidden></div>
+  </div>
+
+  <section class="help" aria-label="Controls">
+    <span><kbd>←</kbd> <kbd>→</kbd> move</span>
+    <span><kbd>↓</kbd> soft drop</span>
+    <span><kbd>Space</kbd> hard drop</span>
+    <span><kbd>↑</kbd> / <kbd>X</kbd> rotate right</span>
+    <span><kbd>Z</kbd> / <kbd>Ctrl</kbd> rotate left</span>
+    <span><kbd>A</kbd> rotate 180</span>
+    <span><kbd>C</kbd> / <kbd>Shift</kbd> hold</span>
+    <span><kbd>Esc</kbd> pause</span>
+    <span><kbd>R</kbd> restart</span>
+    <span><kbd>Ctrl</kbd>+<kbd>Z</kbd> undo (practice)</span>
+  </section>
+</main>
+
+<div class="modal hidden" id="settings" role="dialog" aria-modal="true" aria-labelledby="setTitle">
+  <div class="card">
+    <h2 id="setTitle">Handling</h2>
+    <div class="setting">
+      <div class="top"><label for="das">DAS</label><output id="dasV"></output></div>
+      <input type="range" id="das" min="0" max="300" step="1">
+      <p>How long you hold left or right before the piece starts sliding.</p>
+    </div>
+    <div class="setting">
+      <div class="top"><label for="arr">ARR</label><output id="arrV"></output></div>
+      <input type="range" id="arr" min="0" max="80" step="1">
+      <p>Time between each step while sliding. 0 slides straight to the wall.</p>
+    </div>
+    <div class="setting">
+      <div class="top"><label for="sdf">Soft drop speed</label><output id="sdfV"></output></div>
+      <input type="range" id="sdf" min="5" max="41" step="1">
+      <p>How many times faster than gravity soft drop falls. Max is instant.</p>
+    </div>
+    <div class="actions">
+      <button class="btn" id="resetSettings">Reset to defaults</button>
+      <button class="btn primary" id="closeSettings">Done</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* =====================================================================
+   BlockDrop - Phase 1 (single player)
+   The file has three parts:
+     1. ENGINE   - pure game logic, no DOM. Phase 3 multiplayer reuses this
+                   as-is: each client runs its own Game and listens to events.
+     2. RENDERER - draws the board, hold, and next queue on canvases.
+     3. UI/INPUT - keyboard handling (DAS/ARR), menus, settings, main loop.
+   ===================================================================== */
+
+// ======================== 1. ENGINE ========================
+// ENGINE START
+const COLS = 10, ROWS = 24, HIDDEN = 4, VISIBLE = 20;   // rows 0-3 are above the visible board
+const LOCK_DELAY = 500, MAX_RESETS = 15;
+
+const BASE_SHAPES = {
+  I: [[0,0,0,0],[1,1,1,1],[0,0,0,0],[0,0,0,0]],
+  J: [[1,0,0],[1,1,1],[0,0,0]],
+  L: [[0,0,1],[1,1,1],[0,0,0]],
+  O: [[1,1],[1,1]],
+  S: [[0,1,1],[1,1,0],[0,0,0]],
+  T: [[0,1,0],[1,1,1],[0,0,0]],
+  Z: [[1,1,0],[0,1,1],[0,0,0]],
+};
+function rotCW(m){ const n = m.length; return m.map((row,y)=>row.map((_,x)=>m[n-1-x][y])); }
+const SHAPES = {};
+for (const [t,m] of Object.entries(BASE_SHAPES)){
+  const r = [m]; for (let i=1;i<4;i++) r.push(rotCW(r[i-1])); SHAPES[t] = r;
+}
+
+// SRS wall kicks. Offsets are [x, y] with y pointing UP (as in the official tables).
+const KICKS_JLSTZ = {
+  '0>1':[[0,0],[-1,0],[-1,1],[0,-2],[-1,-2]], '1>0':[[0,0],[1,0],[1,-1],[0,2],[1,2]],
+  '1>2':[[0,0],[1,0],[1,-1],[0,2],[1,2]],     '2>1':[[0,0],[-1,0],[-1,1],[0,-2],[-1,-2]],
+  '2>3':[[0,0],[1,0],[1,1],[0,-2],[1,-2]],    '3>2':[[0,0],[-1,0],[-1,-1],[0,2],[-1,2]],
+  '3>0':[[0,0],[-1,0],[-1,-1],[0,2],[-1,2]],  '0>3':[[0,0],[1,0],[1,1],[0,-2],[1,-2]],
+};
+const KICKS_I = {
+  '0>1':[[0,0],[-2,0],[1,0],[-2,-1],[1,2]],   '1>0':[[0,0],[2,0],[-1,0],[2,1],[-1,-2]],
+  '1>2':[[0,0],[-1,0],[2,0],[-1,2],[2,-1]],   '2>1':[[0,0],[1,0],[-2,0],[1,-2],[-2,1]],
+  '2>3':[[0,0],[2,0],[-1,0],[2,1],[-1,-2]],   '3>2':[[0,0],[-2,0],[1,0],[-2,-1],[1,2]],
+  '3>0':[[0,0],[1,0],[-2,0],[1,-2],[-2,1]],   '0>3':[[0,0],[-1,0],[2,0],[-1,2],[2,-1]],
+};
+const KICKS_180 = [[0,0],[0,1],[1,0],[-1,0],[0,-1]];
+
+// Lines of garbage sent, indexed by combo count (used later for multiplayer)
+const COMBO_ATTACK = [0,0,1,1,1,2,2,3,3,4,4,4,5];
+
+
+function cellsOf(p){
+  const out = [], m = SHAPES[p.type][p.r];
+  for (let y=0;y<m.length;y++) for (let x=0;x<m.length;x++) if (m[y][x]) out.push([p.x+x, p.y+y]);
+  return out;
+}
+function gravityMs(level){ return Math.pow(0.8 - (level-1)*0.007, level-1) * 1000; }
+
+class Game {
+  constructor(){ this.listeners = {}; this.sdf = 20; this.mode = 'marathon'; this.prepare('marathon'); }
+  on(ev, fn){ (this.listeners[ev] ||= []).push(fn); }
+  emit(ev, data){ (this.listeners[ev] || []).forEach(f => f(data)); }
+
+  prepare(mode, seed){
+    this.mode = mode;
+    this.seed = seed ?? ((Math.random()*2**32)>>>0);
+    this.rngState = this.seed | 0;
+    this.history = [];      // practice mode: snapshots for undo
+    this.board = Array.from({length:ROWS}, () => Array(COLS).fill(null));
+    this.queue = []; this.fillQueue();
+    this.hold = null; this.canHold = true;
+    this.score = 0; this.lines = 0; this.level = 1; this.combo = -1; this.b2b = false;
+    this.pieces = 0; this.sent = 0; this.time = 0;
+    this.gravAcc = 0; this.lockTimer = 0; this.lockResets = 0; this.lowestY = 0;
+    this.softDrop = false; this.cur = null; this.lastRotate = false; this.lastKick = 0;
+    this.state = 'ready';   // ready | playing | paused | over | won
+  }
+  // Seeded random numbers (mulberry32), so in multiplayer everyone can get the same piece order.
+  // The state is a plain number so practice-mode undo can save and restore it.
+  rand(){
+    let a = this.rngState = (this.rngState + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  }
+  go(){ this.state = 'playing'; this.spawn(); this.emit('start'); }
+  start(mode, seed){ this.prepare(mode, seed); this.go(); }
+  pause(){ if (this.state === 'playing') this.state = 'paused'; }
+  resume(){ if (this.state === 'paused') this.state = 'playing'; }
+
+  fillQueue(){
+    while (this.queue.length < 14){
+      const bag = ['I','O','T','S','Z','J','L'];
+      for (let i=bag.length-1;i>0;i--){ const j = Math.floor(this.rand()*(i+1)); [bag[i],bag[j]] = [bag[j],bag[i]]; }
+      this.queue.push(...bag);
+    }
+  }
+
+  collides(p){
+    for (const [x,y] of cellsOf(p)){
+      if (x<0 || x>=COLS || y<0 || y>=ROWS || this.board[y][x]) return true;
+    }
+    return false;
+  }
+  isGrounded(){ return this.collides({...this.cur, y:this.cur.y+1}); }
+  ghostY(){ let y = this.cur.y; while (!this.collides({...this.cur, y:y+1})) y++; return y; }
+  checkLowest(){ if (this.cur.y > this.lowestY){ this.lowestY = this.cur.y; this.lockResets = 0; } }
+  afterManip(wasGrounded){
+    if (wasGrounded || this.isGrounded()){ this.lockTimer = 0; this.lockResets++; }
+    this.checkLowest();
+  }
+
+  spawn(type){
+    if (!type){ type = this.queue.shift(); this.fillQueue(); }
+    const x = type === 'O' ? 4 : 3, y = HIDDEN - 2;
+    this.cur = {type, r:0, x, y};
+    this.gravAcc = 0; this.lockTimer = 0; this.lockResets = 0; this.lowestY = y; this.lastRotate = false;
+    if (this.collides(this.cur)){ this.gameOver('Blocked at the top'); return false; }
+    if (!this.isGrounded()){ this.cur.y++; this.lowestY = this.cur.y; }
+    if (this.mode === 'practice') this.saveSnapshot();
+    return true;
+  }
+
+  move(dx){
+    if (this.state !== 'playing') return false;
+    const n = {...this.cur, x:this.cur.x+dx};
+    if (this.collides(n)) return false;
+    const wasG = this.isGrounded();
+    this.cur = n; this.lastRotate = false; this.afterManip(wasG);
+    return true;
+  }
+
+  rotate(dir){   // 1 = clockwise, -1 = counter-clockwise, 2 = 180
+    if (this.state !== 'playing' || this.cur.type === 'O') return false;
+    const p = this.cur, from = p.r, to = (p.r + dir + 4) % 4;
+    const kicks = dir === 2 ? KICKS_180 : (p.type === 'I' ? KICKS_I : KICKS_JLSTZ)[from+'>'+to];
+    const wasG = this.isGrounded();
+    for (let i=0;i<kicks.length;i++){
+      const [kx,ky] = kicks[i];
+      const n = {...p, r:to, x:p.x+kx, y:p.y-ky};
+      if (!this.collides(n)){
+        this.cur = n; this.lastRotate = true; this.lastKick = i; this.afterManip(wasG);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  hardDrop(){
+    if (this.state !== 'playing') return;
+    const y = this.ghostY(), d = y - this.cur.y;
+    if (d > 0){ this.cur = {...this.cur, y}; this.lastRotate = false; }
+    this.score += d * 2;
+    this.lock();
+  }
+
+  holdPiece(){
+    if (this.state !== 'playing' || !this.canHold) return;
+    const t = this.cur.type;
+    if (this.hold){ const h = this.hold; this.hold = t; this.spawn(h); }
+    else { this.hold = t; this.spawn(); }
+    this.canHold = false;
+  }
+
+  tick(dt){
+    if (this.state !== 'playing') return;
+    this.time += dt;
+    const base = gravityMs(this.level);
+    if (this.softDrop && this.sdf >= 41){
+      let d = 0; while (!this.isGrounded()){ this.cur.y++; d++; }
+      if (d){ this.score += d; this.lastRotate = false; this.checkLowest(); }
+    } else {
+      const interval = this.softDrop ? base / this.sdf : base;
+      this.gravAcc += dt;
+      while (this.gravAcc >= interval){
+        this.gravAcc -= interval;
+        if (this.isGrounded()){ this.gravAcc = 0; break; }
+        this.cur.y++; this.lastRotate = false; this.checkLowest();
+        if (this.softDrop) this.score += 1;
+      }
+    }
+    if (this.isGrounded()){
+      this.lockTimer += dt;
+      if (this.lockTimer >= LOCK_DELAY || this.lockResets >= MAX_RESETS) this.lock();
+    } else this.lockTimer = 0;
+  }
+
+  detectTSpin(){
+    if (this.cur.type !== 'T' || !this.lastRotate) return null;
+    const {x,y,r} = this.cur;
+    const occ = (cx,cy) => cx<0 || cx>=COLS || cy<0 || cy>=ROWS || !!this.board[cy][cx];
+    const c = [occ(x,y), occ(x+2,y), occ(x+2,y+2), occ(x,y+2)];   // corners, clockwise from top-left
+    if (c.filter(Boolean).length < 3) return null;
+    const frontBoth = c[r] && c[(r+1)%4];                            // the two corners the T points at
+    return (frontBoth || this.lastKick === 4) ? 'full' : 'mini';
+  }
+
+  lock(){
+    const p = this.cur, tspin = this.detectTSpin();
+    let allAbove = true;
+    for (const [x,y] of cellsOf(p)){ this.board[y][x] = p.type; if (y >= HIDDEN) allAbove = false; }
+    this.pieces++;
+    const full = [];
+    for (let y=0;y<ROWS;y++) if (this.board[y].every(c => c)) full.push(y);
+    for (const y of full){ this.board.splice(y,1); this.board.unshift(Array(COLS).fill(null)); }
+    this.scoreClear(full, tspin);
+    this.canHold = true;
+    if (allAbove && full.length === 0){ this.gameOver('Locked above the board'); return; }
+    if (this.mode === 'sprint' && this.lines >= 40){ this.state = 'won'; this.emit('won', {time:this.time}); return; }
+    this.spawn();
+  }
+
+  scoreClear(rows, tspin){
+    const n = rows.length;
+    let pts, atk, name;
+    if (tspin === 'full'){
+      pts = [400,800,1200,1600][n]; atk = [0,2,4,6][n];
+      name = 'T-spin' + (n ? ' ' + ['','single','double','triple'][n] : '');
+    } else if (tspin === 'mini'){
+      pts = [100,200,400][Math.min(n,2)]; atk = [0,0,1][Math.min(n,2)];
+      name = 'Mini T-spin' + (n ? ' ' + ['','single','double'][Math.min(n,2)] : '');
+    } else {
+      pts = [0,100,300,500,800][n]; atk = [0,0,1,2,4][n];
+      name = ['','Single','Double','Triple','Quad'][n];
+    }
+    pts *= this.level;
+    let b2bNow = false, pc = false;
+    if (n > 0){
+      this.combo++;
+      const difficult = n === 4 || !!tspin;
+      if (difficult){ if (this.b2b){ pts = Math.floor(pts*1.5); atk += 1; b2bNow = true; } this.b2b = true; }
+      else this.b2b = false;
+      pts += 50 * this.combo * this.level;
+      atk += COMBO_ATTACK[Math.min(this.combo, COMBO_ATTACK.length-1)];
+      pc = this.board.every(row => row.every(c => !c));
+      if (pc){ pts += 3500 * this.level; atk += 10; }
+      this.lines += n;
+      if (this.mode === 'marathon' || this.mode === 'versus' || this.mode === 'practice') this.level = Math.min(20, Math.floor(this.lines/10) + 1);
+    } else {
+      this.combo = -1;
+    }
+    this.score += pts; this.sent += atk;
+    if (n > 0 || tspin) this.emit('clear', {lines:n, rows, tspin, name, b2b:b2bNow, combo:this.combo, pc, attack:atk});
+  }
+
+  // ---- Practice mode undo ----
+  saveSnapshot(){
+    this.history.push({
+      board: this.board.map(r => r.slice()), queue: this.queue.slice(), rngState: this.rngState,
+      hold: this.hold, canHold: this.canHold, cur: {...this.cur},
+      score: this.score, lines: this.lines, level: this.level, combo: this.combo, b2b: this.b2b,
+      pieces: this.pieces, sent: this.sent,
+    });
+    if (this.history.length > 1000) this.history.shift();
+  }
+  undo(){
+    if (this.mode !== 'practice') return false;
+    if (this.state === 'playing'){
+      if (this.history.length < 2) return false;
+      this.history.pop();                  // drop the current piece's snapshot
+    } else if (this.state !== 'over' || !this.history.length) return false;
+    const h = this.history[this.history.length - 1];
+    Object.assign(this, {
+      board: h.board.map(r => r.slice()), queue: h.queue.slice(), rngState: h.rngState,
+      hold: h.hold, canHold: h.canHold, cur: {...h.cur},
+      score: h.score, lines: h.lines, level: h.level, combo: h.combo, b2b: h.b2b,
+      pieces: h.pieces, sent: h.sent,
+    });
+    this.gravAcc = 0; this.lockTimer = 0; this.lockResets = 0; this.lowestY = this.cur.y; this.lastRotate = false;
+    this.state = 'playing';
+    this.emit('undo');
+    return true;
+  }
+
+  // For Phase 3: push garbage lines up from the bottom with one hole.
+  addGarbage(n, hole = Math.floor(Math.random()*COLS)){
+    for (let i=0;i<n;i++){
+      const top = this.board.shift();
+      if (top.some(c => c)){ this.board.unshift(top); this.gameOver('Pushed out by garbage'); return; }
+      const row = Array(COLS).fill('G'); row[hole] = null; this.board.push(row);
+    }
+    if (this.cur) while (this.collides(this.cur) && this.cur.y > 0) this.cur.y--;
+  }
+
+  gameOver(reason){ this.state = 'over'; this.emit('over', {reason}); }
+}
+// ENGINE END
+
+// ======================== 2. RENDERER ========================
+const COLORS = { I:'#35d0f0', O:'#ffc93c', T:'#b25ce8', S:'#4fd46a', Z:'#ff5468', J:'#4a78ff', L:'#ff9a3c', G:'#6f7894' };
+const CS = 30, BW = COLS*CS, BH = (VISIBLE+2)*CS, OFF = HIDDEN-2;
+const $ = s => document.querySelector(s);
+
+function setupCanvas(cv, w, h){
+  const d = Math.min(2, window.devicePixelRatio || 1);
+  cv.width = w*d; cv.height = h*d;
+  const ctx = cv.getContext('2d'); ctx.setTransform(d,0,0,d,0,0); return ctx;
+}
+const bctx = setupCanvas($('#board'), BW, BH);
+const hctx = setupCanvas($('#hold'), 120, 76);
+const nctx = setupCanvas($('#next'), 120, 330);
+
+const theme = {};
+function readTheme(){
+  const s = getComputedStyle(document.documentElement);
+  theme.board = s.getPropertyValue('--board').trim() || '#0e1428';
+  theme.grid  = s.getPropertyValue('--grid').trim()  || '#18203a';
+  theme.frame = s.getPropertyValue('--frame').trim() || '#3a4670';
+  theme.danger= s.getPropertyValue('--danger').trim()|| '#ff5a6a';
+}
+readTheme();
+try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', readTheme); } catch(e){}
+new MutationObserver(readTheme).observe(document.documentElement, {attributes:true, attributeFilter:['data-theme']});
+
+function drawCell(c, x, y, s, color){
+  c.fillStyle = color; c.fillRect(x+1, y+1, s-2, s-2);
+  c.fillStyle = 'rgba(255,255,255,.25)'; c.fillRect(x+1, y+1, s-2, Math.max(2, s*.16));
+  c.fillStyle = 'rgba(0,0,0,.22)'; c.fillRect(x+1, y+s-1-s*.14, s-2, s*.14);
+}
+function drawGhost(c, x, y, s, color){
+  c.globalAlpha = .22; c.fillStyle = color; c.fillRect(x+1, y+1, s-2, s-2);
+  c.globalAlpha = .6; c.strokeStyle = color; c.lineWidth = 1.5; c.strokeRect(x+2, y+2, s-4, s-4);
+  c.globalAlpha = 1;
+}
+function drawMini(c, type, cx, cy, s, color){
+  const m = SHAPES[type][0]; let x0=9,x1=-1,y0=9,y1=-1;
+  m.forEach((row,y)=>row.forEach((v,x)=>{ if(v){ x0=Math.min(x0,x); x1=Math.max(x1,x); y0=Math.min(y0,y); y1=Math.max(y1,y);} }));
+  const ox = cx - (x1-x0+1)*s/2, oy = cy - (y1-y0+1)*s/2;
+  m.forEach((row,y)=>row.forEach((v,x)=>{ if(v) drawCell(c, ox+(x-x0)*s, oy+(y-y0)*s, s, color); }));
+}
+
+let fx = [];
+function drawBoard(){
+  const c = bctx, top = 2*CS;
+  c.clearRect(0,0,BW,BH);
+  c.fillStyle = theme.board; c.fillRect(0, top, BW, VISIBLE*CS);
+  c.strokeStyle = theme.grid; c.lineWidth = 1; c.beginPath();
+  for (let x=1;x<COLS;x++){ c.moveTo(x*CS+.5, top); c.lineTo(x*CS+.5, BH); }
+  for (let y=1;y<VISIBLE;y++){ c.moveTo(0, top+y*CS+.5); c.lineTo(BW, top+y*CS+.5); }
+  c.stroke();
+
+  const dead = game.state === 'over';
+  let danger = false;
+  for (let y=OFF;y<ROWS;y++) for (let x=0;x<COLS;x++){
+    const t = game.board[y][x];
+    if (t){ drawCell(c, x*CS, (y-OFF)*CS, CS, dead ? '#4a5270' : COLORS[t]); if (y < HIDDEN+3) danger = true; }
+  }
+  if (game.cur && (game.state === 'playing' || game.state === 'paused')){
+    const col = COLORS[game.cur.type], gy = game.ghostY();
+    for (const [x,y] of cellsOf({...game.cur, y:gy})) if (y >= OFF) drawGhost(c, x*CS, (y-OFF)*CS, CS, col);
+    for (const [x,y] of cellsOf(game.cur)) if (y >= OFF) drawCell(c, x*CS, (y-OFF)*CS, CS, col);
+  }
+  const now = performance.now();
+  fx = fx.filter(f => now - f.t < 240);
+  for (const f of fx){
+    c.fillStyle = `rgba(255,255,255,${(1-(now-f.t)/240)*.85})`;
+    for (const r of f.rows) c.fillRect(0, (r-OFF)*CS, BW, CS);
+  }
+  c.strokeStyle = danger && !dead ? theme.danger : theme.frame; c.lineWidth = 2;
+  c.strokeRect(1, top+1, BW-2, VISIBLE*CS-2);
+}
+function drawSide(){
+  hctx.clearRect(0,0,120,76);
+  if (game.hold) drawMini(hctx, game.hold, 60, 38, 22, game.canHold ? COLORS[game.hold] : '#5a6380');
+  nctx.clearRect(0,0,120,330);
+  for (let i=0;i<5;i++) drawMini(nctx, game.queue[i], 60, 34 + i*65, i === 0 ? 22 : 19, COLORS[game.queue[i]]);
+}
+function fmtTime(ms){
+  const m = Math.floor(ms/60000), s = Math.floor(ms/1000)%60, cs = Math.floor(ms/10)%100;
+  return `${m}:${String(s).padStart(2,'0')}.${String(cs).padStart(2,'0')}`;
+}
+function drawStats(){
+  $('#sScore').textContent = game.score.toLocaleString();
+  $('#sLevel').textContent = game.level;
+  $('#sLines').textContent = game.mode === 'sprint' ? `${game.lines}/40` : game.lines;
+  $('#sTime').textContent = fmtTime(game.time);
+  $('#sPps').textContent = game.time > 0 ? (game.pieces/(game.time/1000)).toFixed(2) : '0.00';
+  $('#sSent').textContent = game.sent;
+}
+
+// ======================== 3. UI / INPUT ========================
+const game = new Game();
+window.game = game;   // exposed for the multiplayer module script at the bottom of this file
+const store = {
+  get(k, d){ try { const v = localStorage.getItem('blockdrop:'+k); return v == null ? d : JSON.parse(v); } catch(e){ return d; } },
+  set(k, v){ try { localStorage.setItem('blockdrop:'+k, JSON.stringify(v)); } catch(e){} },
+};
+const DEFAULTS = {das:133, arr:10, sdf:20};
+const settings = Object.assign({}, DEFAULTS, store.get('settings', {}));
+game.sdf = settings.sdf;
+
+// --- overlays ---
+const ov = $('#overlay');
+function overlay(html){ if (html == null){ ov.classList.add('hidden'); return; } ov.innerHTML = html; ov.classList.remove('hidden'); }
+function menu(){
+  const best = store.get('best40', null), high = store.get('highMarathon', 0);
+  overlay(`<div class="title">BlockDrop<small>Pick a mode</small></div>
+    <div class="modes">
+      <button class="btn primary" data-act="marathon">Marathon</button>
+      <button class="btn" data-act="sprint">40 lines</button>
+      <button class="btn" data-act="practice">Practice</button>
+    </div>
+    <div class="hint">Marathon: survive as gravity speeds up.<br>40 lines: clear 40 lines as fast as you can.<br>Practice: same as Marathon, but <kbd>Ctrl</kbd>+<kbd>Z</kbd> undoes your last piece.<br><br>
+    Best 40 lines: ${best ? fmtTime(best) : 'none yet'}<br>Marathon high score: ${high.toLocaleString()}</div>
+    <button class="btn" data-act="exit-to-lobby" style="width:80%">Exit to lobby</button>`);
+}
+let cdTimer = null, mode = 'marathon';
+function begin(m){
+  mode = m; clearTimeout(cdTimer);
+  game.prepare(m); fx = [];
+  $('#action').className = 'action';
+  $('#practiceNote').hidden = m !== 'practice';
+  let n = 3; overlay(`<div class="count">${n}</div>`);
+  const step = () => { n--; if (n > 0){ overlay(`<div class="count">${n}</div>`); cdTimer = setTimeout(step, 420); }
+                       else { cdTimer = null; overlay(null); game.go(); } };
+  cdTimer = setTimeout(step, 420);
+}
+function togglePause(){
+  if (game.state === 'playing'){ game.pause(); releaseAll();
+    overlay(`<div class="title">Paused</div><div class="modes"><button class="btn primary" data-act="resume">Resume</button>
+      <button class="btn" data-act="again">Restart</button><button class="btn" data-act="menu">Change mode</button></div>
+      <div class="hint">Esc to resume</div>`); }
+  else if (game.state === 'paused'){ game.resume(); overlay(null); }
+}
+ov.addEventListener('click', e => {
+  const b = e.target.closest('[data-act]'); if (!b) return; b.blur();
+  const a = b.dataset.act;
+  if (a === 'marathon' || a === 'sprint' || a === 'practice') begin(a);
+  else if (a === 'again') begin(mode);
+  else if (a === 'menu'){ clearTimeout(cdTimer); game.prepare(mode); menu(); }
+  else if (a === 'resume') togglePause();
+  else if (a === 'undo') doUndo();
+  else if (a === 'exit-to-lobby') location.href = 'lobby.html';
+});
+
+game.on('clear', e => {
+  if (e.rows.length) fx.push({t: performance.now(), rows: e.rows});
+  const parts = [];
+  if (e.b2b) parts.push('<div class="b2b">Back-to-back</div>');
+  if (e.name && (e.lines >= 2 || e.tspin)) parts.push(`<div class="nm ${e.lines === 4 || e.tspin === 'full' ? 'big' : ''}">${e.name}</div>`);
+  if (e.combo > 0) parts.push(`<div class="cb">${e.combo} combo</div>`);
+  if (e.pc) parts.push('<div class="pc">All clear</div>');
+  if (!parts.length) return;
+  const el = $('#action'); el.innerHTML = parts.join(''); el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
+});
+game.on('over', e => {
+  if (window.__mpActive) return;   // the multiplayer module handles its own game-over screen
+  releaseAll();
+  if (game.mode === 'practice'){
+    setTimeout(() => { if (game.state === 'over') overlay(`<div class="title">Topped out<small>${e.reason}</small></div>
+      <div class="modes"><button class="btn primary" data-act="undo">Undo last piece</button>
+      <button class="btn" data-act="again">Start over</button><button class="btn" data-act="menu">Change mode</button></div>
+      <div class="hint">Ctrl+Z to undo</div>`); }, 250);
+    return;
+  }
+  let note = '';
+  if (game.mode === 'marathon' && game.score > store.get('highMarathon', 0)){ store.set('highMarathon', game.score); note = '<br><b>New high score</b>'; }
+  setTimeout(() => overlay(`<div class="title">Game over<small>${e.reason}</small></div>
+    <div class="res">Score <b>${game.score.toLocaleString()}</b><br>Lines <b>${game.lines}</b>, level <b>${game.level}</b><br>Time <b>${fmtTime(game.time)}</b>${note}</div>
+    <div class="modes"><button class="btn primary" data-act="again">Play again</button><button class="btn" data-act="menu">Change mode</button></div>
+    <div class="hint">Enter or R to play again</div>`), 350);
+});
+function doUndo(){ if (game.undo()){ overlay(null); fx = []; $('#action').className = 'action'; } }
+
+game.on('won', e => {
+  releaseAll();
+  const best = store.get('best40', null), isBest = !best || e.time < best;
+  if (isBest) store.set('best40', e.time);
+  overlay(`<div class="title">40 lines cleared</div><div class="bigtime">${fmtTime(e.time)}</div>
+    <div class="res">${isBest ? '<b>New personal best</b>' : 'Best: ' + fmtTime(best)}<br>${(game.pieces/(e.time/1000)).toFixed(2)} pieces per second</div>
+    <div class="modes"><button class="btn primary" data-act="again">Play again</button><button class="btn" data-act="menu">Change mode</button></div>
+    <div class="hint">Enter or R to play again</div>`);
+});
+
+// --- keyboard with DAS / ARR ---
+const KEYMAP = {
+  ArrowLeft:'left', ArrowRight:'right', ArrowDown:'soft', Space:'hard',
+  ArrowUp:'cw', KeyX:'cw', KeyZ:'ccw', ControlLeft:'ccw', ControlRight:'ccw', KeyA:'r180',
+  KeyC:'hold', ShiftLeft:'hold', ShiftRight:'hold', Escape:'pause', KeyP:'pause', KeyR:'restart', Enter:'enter',
+};
+const das = {left:false, right:false, dir:0, timer:0, arrAcc:0, charged:false};
+function pressDir(d){
+  if (d < 0) das.left = true; else das.right = true;
+  das.dir = d; das.timer = 0; das.arrAcc = 0; das.charged = false;
+  game.move(d);
+}
+function releaseDir(d){
+  if (d < 0) das.left = false; else das.right = false;
+  if (das.dir === d){
+    const otherHeld = d < 0 ? das.right : das.left;
+    das.dir = otherHeld ? -d : 0; das.timer = 0; das.arrAcc = 0; das.charged = false;
+  }
+}
+function releaseAll(){ das.left = das.right = false; das.dir = 0; game.softDrop = false; }
+function updateDas(dt){
+  if (!das.dir || game.state !== 'playing') return;
+  das.timer += dt;
+  if (das.timer < settings.das) return;
+  if (settings.arr === 0){ while (game.move(das.dir)); das.charged = true; return; }
+  if (!das.charged){ das.charged = true; das.arrAcc = das.timer - settings.das; game.move(das.dir); return; }
+  das.arrAcc += dt;
+  while (das.arrAcc >= settings.arr){ das.arrAcc -= settings.arr; if (!game.move(das.dir)){ das.arrAcc = 0; break; } }
+}
+
+const settingsOpen = () => !$('#settings').classList.contains('hidden');
+document.addEventListener('keydown', e => {
+  const act = KEYMAP[e.code];
+  if (settingsOpen()){ if (e.code === 'Escape') closeSettings(); return; }
+  if (e.code === 'KeyZ' && (e.ctrlKey || e.metaKey) && game.mode === 'practice' && game.state !== 'ready'){
+    e.preventDefault(); if (game.state !== 'paused') doUndo(); return;   // holding it undoes repeatedly
+  }
+  if (!act) return;
+  e.preventDefault();
+  if (e.repeat) return;
+  const st = game.state;
+  switch (act){
+    case 'left': pressDir(-1); break;
+    case 'right': pressDir(1); break;
+    case 'soft': game.softDrop = true; break;
+    case 'hard': game.hardDrop(); break;
+    case 'cw': game.rotate(1); break;
+    case 'ccw': game.rotate(-1); break;
+    case 'r180': game.rotate(2); break;
+    case 'hold': game.holdPiece(); break;
+    case 'pause': if (window.__mpActive) break; if (st === 'playing' || st === 'paused') togglePause(); else if (st === 'over' || st === 'won') menu(); break;
+    case 'restart': if (window.__mpActive) break; if (st !== 'ready' || cdTimer) begin(mode); break;
+    case 'enter': if (window.__mpActive) break; if ((st === 'ready' && !cdTimer) || st === 'over' || st === 'won') begin(st === 'ready' ? mode : game.mode); break;
+  }
+});
+document.addEventListener('keyup', e => {
+  const act = KEYMAP[e.code];
+  if (act === 'left') releaseDir(-1);
+  else if (act === 'right') releaseDir(1);
+  else if (act === 'soft') game.softDrop = false;
+});
+window.addEventListener('blur', () => { releaseAll(); if (game.state === 'playing' && !window.__mpActive) togglePause(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden && game.state === 'playing' && !window.__mpActive) togglePause(); });
+
+// --- settings ---
+const fields = [
+  ['das', v => v + ' ms'],
+  ['arr', v => v === 0 ? '0 (instant)' : v + ' ms'],
+  ['sdf', v => v >= 41 ? 'Instant' : v + 'x'],
+];
+function syncSettingsUI(){ for (const [k,f] of fields){ $('#'+k).value = settings[k]; $('#'+k+'V').textContent = f(settings[k]); } }
+for (const [k,f] of fields){
+  $('#'+k).addEventListener('input', e => { settings[k] = +e.target.value; $('#'+k+'V').textContent = f(settings[k]);
+    game.sdf = settings.sdf; store.set('settings', settings); });
+}
+function openSettings(){ if (game.state === 'playing' && !window.__mpActive) togglePause(); releaseAll(); syncSettingsUI(); $('#settings').classList.remove('hidden'); $('#closeSettings').focus(); }
+function closeSettings(){ $('#settings').classList.add('hidden'); $('#settingsBtn').blur(); }
+$('#settingsBtn').addEventListener('click', openSettings);
+$('#closeSettings').addEventListener('click', closeSettings);
+$('#resetSettings').addEventListener('click', () => { Object.assign(settings, DEFAULTS); game.sdf = settings.sdf; store.set('settings', settings); syncSettingsUI(); });
+$('#settings').addEventListener('click', e => { if (e.target.id === 'settings') closeSettings(); });
+
+// --- main loop ---
+let last = performance.now();
+function frame(t){
+  const dt = Math.min(100, t - last); last = t;
+  updateDas(dt);
+  game.tick(dt);
+  drawBoard(); drawSide(); drawStats();
+  requestAnimationFrame(frame);
+}
+if (!new URLSearchParams(location.search).has('room')) menu();
+requestAnimationFrame(frame);
+</script>
+
+<script type="module">
+/* =====================================================================
+   4. MULTIPLAYER — only runs when reached via lobby.html (?room=CODE).
+   Reuses the Game engine above completely unmodified except for the one
+   'versus' branch in scoreClear(). Talks to the same Firebase room the
+   lobby used; see lobby.js for the transaction logic behind each call.
+   ===================================================================== */
+import { firebaseConfig } from './firebase-config.js';
+import {
+  initFirebase, signIn, watchRoom, markConnected, updateBoard,
+  sendGarbage, consumeGarbage, reportEliminated, pickTarget, leaveRoom, resetForRematch
+} from './lobby.js';
+
+const roomCode = new URLSearchParams(location.search).get('room');
+if (roomCode){
+  window.__mpActive = true;
+  mpBoot(roomCode).catch(err => {
+    overlay(`<div class="title">Couldn't connect<small>${(err && err.message) || 'Check your connection and try again.'}</small></div>
+      <div class="modes"><button class="btn primary" data-act="mp-lobby">Back to lobby</button></div>`);
+  });
+}
+
+const MCOLS = 10, MROWS = 24, MHIDDEN = 4, MVISIBLE = 20;
+const $$ = s => document.querySelector(s);
+document.addEventListener('click', e => { if (e.target.closest('[data-act="mp-lobby"]')) location.href = 'lobby.html'; });
+
+async function mpBoot(code){
+  overlay(`<div class="title">BlockDrop<small>Connecting…</small></div>`);
+  const { db, auth } = initFirebase(firebaseConfig);
+  const user = await signIn(auth);
+  const myUid = user.uid;
+  markConnected(db, code, myUid);
+
+  const leaveBtn = $$('#leaveMatchBtn');
+  leaveBtn.hidden = false;
+  leaveBtn.addEventListener('click', async () => {
+    await leaveRoom(db, code, myUid).catch(() => {});
+    location.href = 'lobby.html';
+  });
+
+  let latestRoom = null, myEliminated = false, opponentsBuilt = false, matchStarted = false, lastSentJson = null;
+  let queuedGarbage = 0, lastPieceCount = 0, matchConcluded = false;
+
+  const unwatch = watchRoom(db, code, room => {
+    try {
+      latestRoom = room;
+      if (!room){
+        overlay(`<div class="title">Room closed</div><div class="modes"><button class="btn primary" data-act="mp-lobby">Back to lobby</button></div>`);
+        return;
+      }
+      if (!matchStarted && (room.status === 'starting' || room.status === 'playing')){
+        matchStarted = true;
+        startCountdown(room.seed);
+      }
+      if (!opponentsBuilt && room.players){ buildOpponentPanels(room, myUid); opponentsBuilt = true; }
+      if (room.players) renderOpponents(room, myUid);
+
+      const mine = room.players && room.players[myUid];
+      if (mine && mine.pendingGarbage > 0 && window.game.state === 'playing'){
+        // Claim it right away (safe — it's an atomic claim-and-zero, see
+        // consumeGarbage) but don't slam it onto the board mid-fall of the
+        // current piece. Queue it and let the piece-lock check below apply
+        // it between pieces, like every other Tetris game does — and show
+        // it as pending in the meantime so it's not a surprise.
+        consumeGarbage(db, code, myUid).then(n => { queuedGarbage += n; updateGarbageWarning(); });
+      }
+
+      checkForMatchEnd(room, myUid);
+    } catch (err){
+      console.error('[BlockDrop] room update handling failed:', err);
+      overlay(`<div class="title">Something went wrong<small>${err.message}</small></div>
+        <div class="modes"><button class="btn primary" data-act="mp-lobby">Back to lobby</button></div>`);
+    }
+  });
+
+  // The match ends the moment at most one player is still connected and not
+  // eliminated — whether that's because someone just topped out in a 1v1, or
+  // the last survivor in a bigger match. Every client (winner included) runs
+  // this same check off the same synced data, so there's no need to elect a
+  // referee: whoever notices first stops their own board and kicks off the
+  // reset, and the reset transaction is a no-op for whoever calls it second.
+  function checkForMatchEnd(room, myUid){
+    if (matchConcluded || !(room.status === 'starting' || room.status === 'playing')) return;
+    const entries = Object.entries(room.players || {});
+    if (entries.length < 2) return;
+    const aliveIds = entries.filter(([id, p]) => p.connected && p.eliminatedAt == null).map(([id]) => id);
+    if (aliveIds.length > 1) return;
+
+    matchConcluded = true;
+    if (window.game.state === 'playing' || window.game.state === 'paused') window.game.state = 'over';
+    const winnerId = aliveIds[0] || null;
+    const winnerName = winnerId ? ((room.players[winnerId] || {}).name || 'Someone') : null;
+    const title = winnerId == null ? 'Match over — no one left standing'
+      : winnerId === myUid ? 'You win!' : `${winnerName} wins`;
+    overlay(`<div class="title">${title}<small>Back to the lobby to play again…</small></div>`);
+
+    resetForRematch(db, code).catch(err => console.error('[BlockDrop] resetForRematch failed:', err));
+    setTimeout(() => { location.href = 'lobby.html?room=' + encodeURIComponent(code); }, 2500);
+  }
+  window.addEventListener('beforeunload', unwatch);
+
+  function startCountdown(seed){
+    $$('#opponents').hidden = false;
+    let n = 3;
+    overlay(`<div class="count">${n}</div>`);
+    const step = () => {
+      n--;
+      if (n > 0){ overlay(`<div class="count">${n}</div>`); setTimeout(step, 420); }
+      else {
+        overlay(null);
+        window.game.start('versus', seed);
+        lastPieceCount = window.game.pieces;
+        window.game.on('clear', onLocalClear);
+        window.game.on('over', onLocalOver);
+        startBroadcastLoop(code, myUid);
+      }
+    };
+    setTimeout(step, 420);
+  }
+
+  function onLocalClear(e){
+    if (!(e.attack > 0) || !latestRoom) return;
+    const target = pickTarget(latestRoom, myUid);
+    if (target) sendGarbage(db, code, target, e.attack);
+  }
+
+  function onLocalOver(){
+    if (myEliminated || matchConcluded) return;
+    myEliminated = true;
+    reportEliminated(db, code, myUid);
+    // In a 1v1 this is immediately followed by checkForMatchEnd() declaring
+    // the other player the winner; in a bigger match, this just holds until
+    // the match is down to one survivor.
+    overlay(`<div class="title">Topped out<small>Waiting for the match to finish…</small></div>`);
+  }
+
+  function startBroadcastLoop(code, uid){
+    setInterval(() => {
+      // Apply any queued garbage the moment a piece has actually locked
+      // (pieces count just went up), never mid-fall of the current piece.
+      if (window.game.pieces !== lastPieceCount){
+        lastPieceCount = window.game.pieces;
+        if (queuedGarbage > 0 && window.game.state === 'playing'){
+          window.game.addGarbage(queuedGarbage);
+          queuedGarbage = 0;
+          updateGarbageWarning();
+        }
+      }
+      if (window.game.state !== 'playing' && window.game.state !== 'paused') return;
+      const summary = boardSummary(window.game);
+      const json = JSON.stringify(summary);
+      if (json === lastSentJson) return;
+      lastSentJson = json;
+      updateBoard(db, code, uid, summary);
+    }, 100);   // ~10/sec, not every frame — see HANDOFF.md
+  }
+
+  function updateGarbageWarning(){
+    const el = $$('#garbageWarn'), fill = $$('#garbageFill');
+    if (!el || !fill) return;
+    if (queuedGarbage > 0){
+      el.hidden = false;
+      fill.style.height = Math.min(100, queuedGarbage / 20 * 100) + '%';
+    } else {
+      el.hidden = true;
+    }
+  }
+
+  // Full per-cell piece types (not just filled/empty), plus the currently
+  // falling piece baked in, so opponents render with real colors and show
+  // what's actually happening live — not just a silhouette.
+  function boardSummary(g){
+    const rows = [];
+    for (let y = MHIDDEN; y < MROWS; y++){
+      let row = '';
+      for (let x = 0; x < MCOLS; x++) row += g.board[y][x] || '0';
+      rows.push(row);
+    }
+    if (g.cur && (g.state === 'playing' || g.state === 'paused')){
+      for (const [x, y] of cellsOf(g.cur)){
+        const ry = y - MHIDDEN;
+        if (ry >= 0 && ry < rows.length && x >= 0 && x < MCOLS) rows[ry] = rows[ry].slice(0, x) + g.cur.type + rows[ry].slice(x + 1);
+      }
+    }
+    let topRow = MVISIBLE;
+    const emptyRow = '0'.repeat(MCOLS);
+    for (let y = 0; y < rows.length; y++) if (rows[y] !== emptyRow && y < topRow) topRow = y;
+    return {
+      rows, height: MVISIBLE - topRow,
+      hold: g.hold || null, next: g.queue.slice(0, 5),
+      score: g.score, lines: g.lines, sent: g.sent,
+    };
+  }
+
+  const OPP_COLORS = { I:'#35d0f0', O:'#ffc93c', T:'#b25ce8', S:'#4fd46a', Z:'#ff5468', J:'#4a78ff', L:'#ff9a3c', G:'#6f7894' };
+
+  function buildOpponentPanels(room, myUid){
+    const box = $$('#opponents'); box.innerHTML = ''; box.hidden = false;
+    const others = Object.entries(room.players || {}).filter(([id]) => id !== myUid).sort((a,b) => a[1].slot - b[1].slot);
+    // Exactly one opponent (1v1, the common case) gets a big side-by-side
+    // board like tetr.io; more than one falls back to compact previews so
+    // three full-size boards don't have to fight for space.
+    const big = others.length === 1;
+    $$('#matchArea').classList.toggle('versus1v1', big);
+    document.querySelector('.wrap').classList.toggle('mp1v1', big);
+    for (const [id, p] of others){
+      const div = document.createElement('div');
+      div.id = 'opp-' + id;
+      if (big){
+        // Reuses the exact .side/.box/.boardWrap markup and CSS your own
+        // board uses (same widths, same height formula) — Hold+stats on
+        // the left, board in the middle, Next on the right, name below
+        // the board — a true mirror, not a smaller lookalike.
+        div.className = 'opp big';
+        div.innerHTML = `
+          <aside class="side">
+            <div class="box"><div class="label">Hold</div><canvas class="oppHold" width="120" height="76"></canvas></div>
+            <div class="box stats">
+              <div class="row"><span>Score</span><span class="v oppScore">0</span></div>
+              <div class="row"><span>Lines</span><span class="v oppLines">0</span></div>
+              <div class="row"><span>Sent</span><span class="v oppSent">0</span></div>
+            </div>
+          </aside>
+          <div class="oppBoardCol">
+            <div class="boardWrap"><canvas class="oppBoard"></canvas></div>
+            <div class="oppNameRow"><span class="name"></span><span class="rank"></span></div>
+          </div>
+          <aside class="side">
+            <div class="box"><div class="label">Next</div><canvas class="oppNext" width="120" height="330"></canvas></div>
+          </aside>`;
+        // Same internal resolution and devicePixelRatio handling as your
+        // own #board/#hold/#next canvases, via the same setupCanvas()
+        // helper the main renderer uses — genuinely the same size and
+        // sharpness, not just visually close.
+        setupCanvas(div.querySelector('.oppBoard'), 300, 660);
+        setupCanvas(div.querySelector('.oppHold'), 120, 76);
+        setupCanvas(div.querySelector('.oppNext'), 120, 330);
+      } else {
+        div.className = 'opp';
+        div.innerHTML = `<div class="name"></div><canvas class="oppBoard" width="70" height="140"></canvas><div class="rank"></div>`;
+      }
+      div.querySelector('.name').textContent = p.name;
+      box.appendChild(div);
+    }
+  }
+
+  function renderOpponents(room, myUid){
+    for (const [id, p] of Object.entries(room.players || {})){
+      if (id === myUid) continue;
+      const el = $$('#opp-' + id); if (!el) continue;
+      const alive = p.connected && p.eliminatedAt == null;
+      el.classList.toggle('gone', !alive);
+      const rankEl = el.querySelector('.rank');
+      if (rankEl) rankEl.textContent = p.eliminatedAt ? 'Out' : (p.connected ? '' : 'Disconnected');
+
+      const b = p.board;
+      const boardCv = el.querySelector('.oppBoard');
+      if (!b || !b.rows || !boardCv) continue;
+      const big = el.classList.contains('big');
+      const ctx = boardCv.getContext('2d');
+      // In big mode, setupCanvas() already applied a devicePixelRatio
+      // transform, so boardCv.width is the scaled BUFFER size, not the
+      // logical drawing size — use the same logical size/cell/top-offset
+      // as the main board (BW=300, CS=30, top = 2*CS) instead of deriving
+      // it from the (now-scaled) canvas attribute.
+      const cell = big ? 30 : (boardCv.width / MCOLS);
+      const topOffset = big ? 2 * cell : 0;
+      const logicalW = big ? 300 : boardCv.width;
+      const logicalH = big ? 660 : boardCv.height;
+      ctx.clearRect(0, 0, logicalW, logicalH);
+      if (big){ ctx.fillStyle = '#000'; ctx.fillRect(0, topOffset, logicalW, MVISIBLE*cell); }
+      for (let y = 0; y < b.rows.length; y++){
+        const row = b.rows[y];
+        for (let x = 0; x < MCOLS; x++){
+          const t = row[x];
+          if (t !== '0') drawCell(ctx, x*cell, topOffset + y*cell, cell, alive ? (OPP_COLORS[t] || '#888') : '#3a3a3a');
+        }
+      }
+      if (big){ ctx.strokeStyle = '#3a3a3a'; ctx.lineWidth = 2; ctx.strokeRect(1, topOffset+1, logicalW-2, MVISIBLE*cell-2); }
+
+      // Same layout math as drawSide() for your own Hold/Next, at the same
+      // logical size (setupCanvas applied a devicePixelRatio transform, so
+      // holdCv.width/nextCv.width are now scaled buffer sizes, not logical
+      // ones — use the fixed 120x76 / 120x330 logical size directly).
+      const holdCv = el.querySelector('.oppHold');
+      if (holdCv){
+        const hctx = holdCv.getContext('2d');
+        hctx.clearRect(0, 0, 120, 76);
+        if (b.hold) drawMini(hctx, b.hold, 60, 38, 22, OPP_COLORS[b.hold]);
+      }
+      const nextCv = el.querySelector('.oppNext');
+      if (nextCv && b.next){
+        const nctx = nextCv.getContext('2d');
+        nctx.clearRect(0, 0, 120, 330);
+        b.next.forEach((t,i) => drawMini(nctx, t, 60, 34 + i*65, i === 0 ? 22 : 19, OPP_COLORS[t]));
+      }
+      const scoreEl = el.querySelector('.oppScore'); if (scoreEl) scoreEl.textContent = (b.score||0).toLocaleString();
+      const linesEl = el.querySelector('.oppLines'); if (linesEl) linesEl.textContent = b.lines||0;
+      const sentEl = el.querySelector('.oppSent'); if (sentEl) sentEl.textContent = b.sent||0;
+    }
+  }
+
+}
+</script>
+</body>
+</html>

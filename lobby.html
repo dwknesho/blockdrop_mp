@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BlockDrop — Lobby</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root{ --bg:#000; --panel:#0d0d0d; --text:#ededed; --muted:#8a8a8a; --border:#262626; --accent:#ffc93c; --accent-ink:#111; --danger:#ff5a6a; --ok:#4fd46a; }
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:var(--bg);color:var(--text);font-family:'Chakra Petch',system-ui,sans-serif;
+  display:flex;align-items:center;justify-content:center;padding:20px}
+.card{width:min(420px,100%);background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:24px}
+h1{margin:0 0 4px;font-size:1.5rem}
+p.sub{margin:0 0 20px;color:var(--muted);font-size:.9rem}
+label{display:block;font-size:.85rem;color:var(--muted);margin-bottom:6px}
+input{width:100%;font:inherit;font-size:1rem;background:#000;border:1px solid var(--border);border-radius:8px;
+  color:var(--text);padding:10px 12px;margin-bottom:14px}
+input:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent)}
+input.code{text-transform:uppercase;letter-spacing:.15em;font-weight:700;text-align:center}
+.btn{width:100%;font:inherit;font-weight:700;font-size:1rem;padding:12px;border-radius:8px;border:1px solid var(--border);
+  background:#171717;color:var(--text);cursor:pointer;margin-bottom:10px}
+.btn:hover{border-color:var(--muted)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.row2{display:flex;gap:10px}
+.row2 .btn{margin-bottom:0}
+.divider{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:.8rem;margin:16px 0}
+.divider::before,.divider::after{content:'';flex:1;height:1px;background:var(--border)}
+.roomcode{font-size:2rem;font-weight:700;letter-spacing:.12em;text-align:center;color:var(--accent);margin-bottom:4px}
+.hint{text-align:center;color:var(--muted);font-size:.82rem;margin-bottom:18px}
+.players{list-style:none;margin:0 0 18px;padding:0;display:flex;flex-direction:column;gap:8px}
+.players li{display:flex;align-items:center;justify-content:space-between;background:#000;border:1px solid var(--border);
+  border-radius:8px;padding:10px 12px;font-size:.95rem}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--muted);display:inline-block;margin-right:8px}
+.dot.on{background:var(--ok)}
+.tag{font-size:.78rem;padding:2px 8px;border-radius:20px;border:1px solid var(--border);color:var(--muted)}
+.tag.ready{color:var(--ok);border-color:var(--ok)}
+.msg{font-size:.85rem;text-align:center;min-height:20px;margin-bottom:8px}
+.msg.err{color:var(--danger)}
+.msg.ok{color:var(--ok)}
+.back{color:var(--muted);background:none;border:none;font:inherit;font-size:.85rem;cursor:pointer;padding:0;margin-bottom:16px}
+.back:hover{color:var(--text)}
+[hidden]{display:none}
+</style>
+</head>
+<body>
+
+<!-- ============ SCREEN 0: singleplayer or multiplayer ============ -->
+<div class="card" id="screenLanding">
+  <h1>BlockDrop</h1>
+  <p class="sub">Play solo, or with friends.</p>
+  <button class="btn primary" id="soloBtn">Singleplayer</button>
+  <button class="btn" id="mpBtn">Multiplayer</button>
+</div>
+
+<!-- ============ SCREEN 1: name + create/join ============ -->
+<div class="card" id="screenHome" hidden>
+  <button class="back" id="backToLandingBtn">&larr; Back</button>
+  <h1>BlockDrop</h1>
+  <p class="sub">Play Tetris together, just with friends.</p>
+  <label for="name">Your name</label>
+  <input id="name" maxlength="16" placeholder="e.g. Alex" autocomplete="off">
+
+  <button class="btn primary" id="createBtn">Create a room</button>
+  <div class="divider">or</div>
+  <label for="joinCode">Room code</label>
+  <input id="joinCode" class="code" maxlength="4" placeholder="ABCD" autocomplete="off">
+  <button class="btn" id="joinBtn">Join room</button>
+  <p class="msg err" id="homeMsg"></p>
+</div>
+
+<!-- ============ SCREEN 2: room / ready-up ============ -->
+<div class="card" id="screenRoom" hidden>
+  <button class="back" id="leaveBtn">&larr; Leave room</button>
+  <div class="roomcode" id="roomCodeDisplay">----</div>
+  <p class="hint">Share this code — friends enter it on the home screen</p>
+  <ul class="players" id="playerList"></ul>
+  <button class="btn primary" id="readyBtn">Ready up</button>
+  <p class="msg" id="roomMsg"></p>
+</div>
+
+<!-- ============ SCREEN 3: starting ============ -->
+<div class="card" id="screenStarting" hidden style="text-align:center">
+  <h1>Match starting</h1>
+  <p class="sub" id="startingSub">Setting up the board…</p>
+</div>
+
+<script type="module">
+import { firebaseConfig } from './firebase-config.js';
+import { initFirebase, signIn, createRoom, joinRoom, watchRoom, setReady, leaveRoom, tryStartMatch, cancelLeaveOnDisconnect } from './lobby.js';
+
+const $ = s => document.querySelector(s);
+const show = id => { for (const s of ['screenLanding','screenHome','screenRoom','screenStarting']) $('#'+s).hidden = (s !== id); };
+
+$('#soloBtn').addEventListener('click', () => location.href = 'blockdrop.html');
+$('#mpBtn').addEventListener('click', () => show('screenHome'));
+$('#backToLandingBtn').addEventListener('click', () => show('screenLanding'));
+
+let db, auth, uid, code, unwatch, myReady = false, started = false, matchAttempted = false, lastRoom = null;
+
+async function boot(){
+  if (firebaseConfig.apiKey === 'PASTE_ME'){
+    $('#homeMsg').textContent = 'Add your Firebase config in firebase-config.js first — see README.md.';
+    $('#createBtn').disabled = $('#joinBtn').disabled = true;
+    return;
+  }
+  ({ db, auth } = initFirebase(firebaseConfig));
+  const user = await signIn(auth);
+  uid = user.uid;
+  const saved = JSON.parse(localStorage.getItem('blockdrop:lobby') || '{}');
+  if (saved.name) $('#name').value = saved.name;
+  if (saved.code) $('#joinCode').value = saved.code;
+
+  // A match that just ended sends its players back here as
+  // lobby.html?room=CODE, straight into the same room's ready-up screen
+  // instead of the home screen — the room's already been reset to
+  // "waiting" and this player already has a slot in it, so this is a
+  // rejoin (same path a refresh takes), not a fresh join.
+  const rejoinCode = new URLSearchParams(location.search).get('room');
+  if (rejoinCode && saved.name){
+    const r = await joinRoom(db, rejoinCode, uid, saved.name);
+    if (r.ok){ code = rejoinCode; await enterRoom(saved.name); }
+  }
+}
+boot();
+
+function saveLocal(){ localStorage.setItem('blockdrop:lobby', JSON.stringify({name: $('#name').value.trim(), code})); }
+
+$('#createBtn').addEventListener('click', async () => {
+  const name = $('#name').value.trim();
+  if (!name) return $('#homeMsg').textContent = 'Enter your name first.';
+  $('#homeMsg').textContent = '';
+  $('#createBtn').disabled = true;
+  try {
+    code = await createRoom(db);
+    await joinRoom(db, code, uid, name);   // the host is a player too — same join transaction everyone else uses
+    await enterRoom(name);
+  } catch (e) {
+    $('#homeMsg').textContent = e.message || 'Could not create a room.';
+  } finally { $('#createBtn').disabled = false; }
+});
+
+$('#joinBtn').addEventListener('click', async () => {
+  const name = $('#name').value.trim();
+  const c = $('#joinCode').value.trim().toUpperCase();
+  if (!name) return $('#homeMsg').textContent = 'Enter your name first.';
+  if (c.length !== 4) return $('#homeMsg').textContent = 'Room codes are 4 letters/numbers.';
+  $('#homeMsg').textContent = '';
+  $('#joinBtn').disabled = true;
+  try {
+    const r = await joinRoom(db, c, uid, name);
+    if (!r.ok){
+      $('#homeMsg').textContent = { 'no-room':"That room code doesn't exist.", 'in-progress':'That match already started.', 'full':'That room is full (max 3 players).' }[r.reason] || 'Could not join.';
+      return;
+    }
+    code = c; await enterRoom(name);
+  } catch (e) {
+    $('#homeMsg').textContent = 'Could not join — check the code and your connection.';
+  } finally { $('#joinBtn').disabled = false; }
+});
+
+async function enterRoom(name){
+  saveLocal();
+  $('#roomCodeDisplay').textContent = code;
+  myReady = false; started = false; matchAttempted = false;
+  $('#readyBtn').textContent = 'Ready up';
+  show('screenRoom');
+  unwatch = watchRoom(db, code, room => renderRoom(room, name));
+}
+
+async function goToMatch(){
+  if (started) return;
+  started = true;
+  if (unwatch) unwatch();
+  $('#startingSub').textContent = 'Loading the board…';
+  show('screenStarting');
+  // This navigation closes our connection just like actually leaving would,
+  // which would otherwise trigger the onDisconnect().remove() armed in
+  // joinRoom() and delete us (name/slot/ready and all) a moment before the
+  // new page's markConnected() can react — see cancelLeaveOnDisconnect()'s
+  // comment in lobby.js.
+  await cancelLeaveOnDisconnect(db, code, uid).catch(() => {});
+  location.href = `blockdrop.html?room=${encodeURIComponent(code)}`;
+}
+
+function renderRoom(room, myName){
+  if (!room) return;
+  lastRoom = room;
+  const players = Object.entries(room.players || {}).sort((a,b) => a[1].slot - b[1].slot);
+  $('#playerList').innerHTML = players.map(([id,p]) => `
+    <li><span><span class="dot ${p.connected ? 'on' : ''}"></span>${p.name}${id === uid ? ' (you)' : ''}</span>
+    <span class="tag ${p.ready ? 'ready' : ''}">${p.connected ? (p.ready ? 'Ready' : 'Not ready') : 'Disconnected'}</span></li>`).join('');
+
+  const allReady = players.length >= 2 && players.every(([,p]) => p.ready && p.connected);
+  $('#roomMsg').className = 'msg';
+  $('#roomMsg').textContent = players.length < 2 ? 'Waiting for at least one more player…'
+    : allReady ? 'Everyone is ready — starting…' : '';
+
+  // --- Hazard: a transaction's own local echo can reach this SAME client's
+  // onValue listener slightly before that client's own write has actually
+  // finished round-tripping to the server. Racing off to blockdrop.html on
+  // that echo can beat the real commit there, so a fresh read on the new
+  // page still sees "waiting". Fix: whoever CALLS tryStartMatch navigates
+  // only off that call's own resolved promise (which only resolves after
+  // the write is genuinely confirmed), not off the passive listener below —
+  // matchAttempted gates the listener branch while that call is in flight.
+  // Everyone else still navigates off the listener, which only ever fires
+  // for them once the write is actually confirmed (proven out during
+  // testing: a losing client's listener picked up the real value fine).
+  if (room.status === 'waiting' && allReady && !started && !matchAttempted){
+    matchAttempted = true;
+    tryStartMatch(db, code).then(ok => {
+      matchAttempted = false;
+      if (ok) goToMatch();
+      else if (lastRoom && (lastRoom.status === 'starting' || lastRoom.status === 'playing')) goToMatch();
+    }).catch(err => {
+      console.error('[BlockDrop] tryStartMatch failed:', err);
+      matchAttempted = false;
+    });
+  }
+  if ((room.status === 'starting' || room.status === 'playing') && !started && !matchAttempted){
+    goToMatch();
+  }
+}
+
+$('#readyBtn').addEventListener('click', async () => {
+  myReady = !myReady;
+  $('#readyBtn').textContent = myReady ? 'Cancel ready' : 'Ready up';
+  await setReady(db, code, uid, myReady);
+});
+
+$('#leaveBtn').addEventListener('click', async () => {
+  if (unwatch) unwatch();
+  if (code && uid) await leaveRoom(db, code, uid);
+  code = null; myReady = false;
+  $('#homeMsg').textContent = '';
+  show('screenHome');
+});
+</script>
+</body>
+</html>
