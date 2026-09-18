@@ -394,8 +394,13 @@ class Game {
     const full = [];
     for (let y=0;y<ROWS;y++) if (this.board[y].every(c => c)) full.push(y);
     for (const y of full){ this.board.splice(y,1); this.board.unshift(Array(COLS).fill(null)); }
-    this.scoreClear(full, tspin);
+    const atk = this.scoreClear(full, tspin);
     this.canHold = true;
+    // Fires on every lock, clearing or not — multiplayer uses this (not
+    // 'clear', which only fires when something was actually cleared) to
+    // know precisely when to apply queued garbage vs. cancel it against an
+    // outgoing attack, with no polling/timing guesswork.
+    this.emit('lock', { attack: atk, cleared: full.length > 0 });
     if (allAbove && full.length === 0){ this.gameOver('Locked above the board'); return; }
     if (this.mode === 'sprint' && this.lines >= 40){ this.state = 'won'; this.emit('won', {time:this.time}); return; }
     this.spawn();
@@ -432,6 +437,7 @@ class Game {
     }
     this.score += pts; this.sent += atk;
     if (n > 0 || tspin) this.emit('clear', {lines:n, rows, tspin, name, b2b:b2bNow, combo:this.combo, pc, attack:atk});
+    return atk;
   }
 
   // ---- Practice mode undo ----
@@ -799,7 +805,13 @@ async function mpBoot(code){
   });
 
   let latestRoom = null, myEliminated = false, opponentsBuilt = false, matchStarted = false, lastSentJson = null;
-  let queuedGarbage = 0, lastPieceCount = 0, matchConcluded = false;
+  let matchConcluded = false;
+  // Incoming garbage you haven't been hit by yet, as separate chunks (each
+  // keeping the random column gap it was assigned when it arrived) rather
+  // than one merged number — matches tetr.io: stacking multiple attacks
+  // doesn't force them all through the same gap.
+  let queuedGarbage = [];
+  const totalQueuedGarbage = () => queuedGarbage.reduce((s, c) => s + c.amount, 0);
 
   const unwatch = watchRoom(db, code, room => {
     try {
@@ -819,10 +831,16 @@ async function mpBoot(code){
       if (mine && mine.pendingGarbage > 0 && window.game.state === 'playing'){
         // Claim it right away (safe — it's an atomic claim-and-zero, see
         // consumeGarbage) but don't slam it onto the board mid-fall of the
-        // current piece. Queue it and let the piece-lock check below apply
-        // it between pieces, like every other Tetris game does — and show
-        // it as pending in the meantime so it's not a surprise.
-        consumeGarbage(db, code, myUid).then(n => { queuedGarbage += n; updateGarbageWarning(); });
+        // current piece. Queue it as its own chunk with its own gap column,
+        // and let the 'lock' handler below decide whether it lands, gets
+        // canceled, or both — matching tetr.io, garbage never applies
+        // mid-drop, only between pieces.
+        consumeGarbage(db, code, myUid).then(n => {
+          if (n > 0){
+            queuedGarbage.push({ amount: n, hole: Math.floor(Math.random() * MCOLS) });
+            updateGarbageWarning();
+          }
+        });
       }
 
       checkForMatchEnd(room, myUid);
@@ -869,8 +887,7 @@ async function mpBoot(code){
       else {
         overlay(null);
         window.game.start('versus', seed);
-        lastPieceCount = window.game.pieces;
-        window.game.on('clear', onLocalClear);
+        window.game.on('lock', onLocalLock);
         window.game.on('over', onLocalOver);
         startBroadcastLoop(code, myUid);
       }
@@ -878,10 +895,41 @@ async function mpBoot(code){
     setTimeout(step, 420);
   }
 
-  function onLocalClear(e){
-    if (!(e.attack > 0) || !latestRoom) return;
-    const target = pickTarget(latestRoom, myUid);
-    if (target) sendGarbage(db, code, target, e.attack);
+  // The one place garbage actually moves. Fires on every lock (see the
+  // engine's 'lock' event), clearing or not — never on a timer, so there's
+  // no risk of applying garbage mid-fall of the current piece, and no
+  // guessing whether "the last lock" happened to also clear something.
+  function onLocalLock(e){
+    if (e.cleared){
+      // Cancel first: whatever you cleared eats into your own queued
+      // incoming garbage before anything gets sent onward, oldest chunk
+      // first — matches tetr.io's garbage cancellation. Only genuine
+      // surplus (attack left over after your own queue is empty) goes out.
+      let remaining = e.attack;
+      while (remaining > 0 && queuedGarbage.length){
+        const chunk = queuedGarbage[0];
+        const take = Math.min(remaining, chunk.amount);
+        chunk.amount -= take; remaining -= take;
+        if (chunk.amount === 0) queuedGarbage.shift();
+      }
+      if (remaining > 0 && latestRoom){
+        const target = pickTarget(latestRoom, myUid);
+        if (target) sendGarbage(db, code, target, remaining);
+      }
+    } else if (queuedGarbage.length){
+      // No clear this placement, so whatever's queued actually lands —
+      // capped at 8 lines per placement (tetr.io's cap); any excess stays
+      // queued, giving you a chance to clear and cancel it before it hits.
+      let cap = 8;
+      while (cap > 0 && queuedGarbage.length){
+        const chunk = queuedGarbage[0];
+        const take = Math.min(cap, chunk.amount);
+        window.game.addGarbage(take, chunk.hole);
+        chunk.amount -= take; cap -= take;
+        if (chunk.amount === 0) queuedGarbage.shift();
+      }
+    }
+    updateGarbageWarning();
   }
 
   function onLocalOver(){
@@ -896,16 +944,6 @@ async function mpBoot(code){
 
   function startBroadcastLoop(code, uid){
     setInterval(() => {
-      // Apply any queued garbage the moment a piece has actually locked
-      // (pieces count just went up), never mid-fall of the current piece.
-      if (window.game.pieces !== lastPieceCount){
-        lastPieceCount = window.game.pieces;
-        if (queuedGarbage > 0 && window.game.state === 'playing'){
-          window.game.addGarbage(queuedGarbage);
-          queuedGarbage = 0;
-          updateGarbageWarning();
-        }
-      }
       if (window.game.state !== 'playing' && window.game.state !== 'paused') return;
       const summary = boardSummary(window.game);
       const json = JSON.stringify(summary);
@@ -918,9 +956,10 @@ async function mpBoot(code){
   function updateGarbageWarning(){
     const el = $$('#garbageWarn'), fill = $$('#garbageFill');
     if (!el || !fill) return;
-    if (queuedGarbage > 0){
+    const total = totalQueuedGarbage();
+    if (total > 0){
       el.hidden = false;
-      fill.style.height = Math.min(100, queuedGarbage / 20 * 100) + '%';
+      fill.style.height = Math.min(100, total / 20 * 100) + '%';
     } else {
       el.hidden = true;
     }
