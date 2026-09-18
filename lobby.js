@@ -185,17 +185,24 @@ export function markConnected(db, code, uid){
   onDisconnect(ref(db, `rooms/${code}/players/${uid}/connected`)).set(false);
 }
 
-// --- Hazard: lobby.html's ready-up screen arms onDisconnect().remove() on
-// the whole player node (see joinRoom()) so closing the browser while still
-// in the lobby cleans up properly. But navigating from lobby.html to
-// blockdrop.html ALSO closes that connection — which would fire the same
-// handler and delete the player (name/slot/ready and all) a moment before
-// markConnected() runs on the new page and could only rebuild a bare
-// {connected:true}, reintroducing the exact "player shows up with no name"
-// bug this project already hit once. Call this right before navigating so
-// the intentional handoff doesn't look like an abandonment. ---
-export function cancelLeaveOnDisconnect(db, code, uid){
-  return onDisconnect(ref(db, `rooms/${code}/players/${uid}`)).cancel();
+// --- Hazard: every intentional page-to-page handoff in this app (lobby ->
+// match, and match -> lobby again after it ends) closes a real connection,
+// which fires whatever onDisconnect handler is currently armed for this
+// player — lobby.html's whole-node .remove() (joinRoom) or blockdrop.html's
+// narrower connected-flag .set(false) (markConnected) — even though nobody
+// actually left. First time this bit us: navigating lobby -> match deleted
+// the player a moment before the new page's markConnected() could react.
+// Second time: navigating match -> lobby after a win could flip connected
+// to false right as resetForRematch was trying to read it, making the room
+// look abandoned ("Room closed") if that transaction's network round trip
+// took even slightly longer than the fixed delay before navigating.
+// Cancelling BOTH possible paths right before any such navigation — a
+// no-op for whichever one isn't actually armed — closes both holes. ---
+export function cancelDisconnectHandlers(db, code, uid){
+  return Promise.all([
+    onDisconnect(ref(db, `rooms/${code}/players/${uid}`)).cancel(),
+    onDisconnect(ref(db, `rooms/${code}/players/${uid}/connected`)).cancel(),
+  ]);
 }
 
 // Board updates are a plain `set()`, not a transaction — only the owning

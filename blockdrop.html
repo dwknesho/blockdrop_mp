@@ -774,7 +774,8 @@ requestAnimationFrame(frame);
 import { firebaseConfig } from './firebase-config.js';
 import {
   initFirebase, signIn, watchRoom, markConnected, updateBoard,
-  sendGarbage, consumeGarbage, reportEliminated, pickTarget, leaveRoom, resetForRematch
+  sendGarbage, consumeGarbage, reportEliminated, pickTarget, leaveRoom, resetForRematch,
+  cancelDisconnectHandlers
 } from './lobby.js';
 
 const roomCode = new URLSearchParams(location.search).get('room');
@@ -800,6 +801,11 @@ async function mpBoot(code){
   const leaveBtn = $$('#leaveMatchBtn');
   leaveBtn.hidden = false;
   leaveBtn.addEventListener('click', async () => {
+    // Cancel first so the armed match-phase onDisconnect can't write a
+    // stray {connected:false} back into the player node leaveRoom() is
+    // about to delete out from under it — same reasoning as
+    // checkForMatchEnd(), see cancelDisconnectHandlers() in lobby.js.
+    await cancelDisconnectHandlers(db, code, myUid).catch(() => {});
     await leaveRoom(db, code, myUid).catch(() => {});
     location.href = 'lobby.html';
   });
@@ -872,6 +878,14 @@ async function mpBoot(code){
       : winnerId === myUid ? 'You win!' : `${winnerName} wins`;
     overlay(`<div class="title">${title}<small>Back to the lobby to play again…</small></div>`);
 
+    // Disarm the match-phase onDisconnect BEFORE doing anything else — the
+    // eventual navigation back to lobby.html closes this connection just
+    // like a real drop would, and if that fires while resetForRematch is
+    // still in flight (a slow network round trip, not a fast local test),
+    // it can flip our own connected flag to false right as that transaction
+    // reads it, making the room look abandoned. See cancelDisconnectHandlers()
+    // in lobby.js.
+    cancelDisconnectHandlers(db, code, myUid).catch(() => {});
     resetForRematch(db, code).catch(err => console.error('[BlockDrop] resetForRematch failed:', err));
     setTimeout(() => { location.href = 'lobby.html?room=' + encodeURIComponent(code); }, 2500);
   }
