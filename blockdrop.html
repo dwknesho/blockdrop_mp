@@ -61,6 +61,7 @@ h1{margin:0;font-size:1.5rem;font-weight:700;letter-spacing:.02em}
 
 .action{min-height:96px;text-align:right;font-weight:700;opacity:0;line-height:1.25}
 .action .b2b{color:var(--accent);font-size:.85rem}
+.action .b2b.surge{color:var(--danger);font-weight:800}
 .action .nm{font-size:1.05rem}
 .action .nm.big{font-size:1.35rem}
 .action .cb{color:var(--muted);font-size:.95rem}
@@ -238,6 +239,10 @@ const KICKS_180 = [[0,0],[0,1],[1,0],[-1,0],[0,-1]];
 
 // Lines of garbage sent, indexed by combo count (used later for multiplayer)
 const COMBO_ATTACK = [0,0,1,1,1,2,2,3,3,4,4,4,5];
+// tetr.io's "Surge": once a back-to-back streak reaches its 5th consecutive
+// difficult clear (displayed as "B2B x4"), each further consecutive clear
+// adds one more line on top of the flat B2B bonus, uncapped.
+const B2B_SURGE_STREAK = 5;
 
 
 function cellsOf(p){
@@ -260,7 +265,7 @@ class Game {
     this.board = Array.from({length:ROWS}, () => Array(COLS).fill(null));
     this.queue = []; this.fillQueue();
     this.hold = null; this.canHold = true;
-    this.score = 0; this.lines = 0; this.level = 1; this.combo = -1; this.b2b = false;
+    this.score = 0; this.lines = 0; this.level = 1; this.combo = -1; this.b2bCount = 0;
     this.pieces = 0; this.sent = 0; this.time = 0;
     this.gravAcc = 0; this.lockTimer = 0; this.lockResets = 0; this.lowestY = 0;
     this.softDrop = false; this.cur = null; this.lastRotate = false; this.lastKick = 0;
@@ -420,12 +425,22 @@ class Game {
       name = ['','Single','Double','Triple','Quad'][n];
     }
     pts *= this.level;
-    let b2bNow = false, pc = false;
+    let b2bNow = false, surge = 0, pc = false;
     if (n > 0){
       this.combo++;
       const difficult = n === 4 || !!tspin;
-      if (difficult){ if (this.b2b){ pts = Math.floor(pts*1.5); atk += 1; b2bNow = true; } this.b2b = true; }
-      else this.b2b = false;
+      if (difficult){
+        this.b2bCount++;
+        if (this.b2bCount > 1){
+          pts = Math.floor(pts*1.5); atk += 1; b2bNow = true;
+          if (this.b2bCount >= B2B_SURGE_STREAK){
+            surge = this.b2bCount - (B2B_SURGE_STREAK - 1);   // +1 at the 5th consecutive clear, +2 at the 6th, uncapped
+            atk += surge;
+          }
+        }
+      } else {
+        this.b2bCount = 0;
+      }
       pts += 50 * this.combo * this.level;
       atk += COMBO_ATTACK[Math.min(this.combo, COMBO_ATTACK.length-1)];
       pc = this.board.every(row => row.every(c => !c));
@@ -436,7 +451,7 @@ class Game {
       this.combo = -1;
     }
     this.score += pts; this.sent += atk;
-    if (n > 0 || tspin) this.emit('clear', {lines:n, rows, tspin, name, b2b:b2bNow, combo:this.combo, pc, attack:atk});
+    if (n > 0 || tspin) this.emit('clear', {lines:n, rows, tspin, name, b2b:b2bNow, b2bCount:this.b2bCount, surge, combo:this.combo, pc, attack:atk});
     return atk;
   }
 
@@ -445,7 +460,7 @@ class Game {
     this.history.push({
       board: this.board.map(r => r.slice()), queue: this.queue.slice(), rngState: this.rngState,
       hold: this.hold, canHold: this.canHold, cur: {...this.cur},
-      score: this.score, lines: this.lines, level: this.level, combo: this.combo, b2b: this.b2b,
+      score: this.score, lines: this.lines, level: this.level, combo: this.combo, b2bCount: this.b2bCount,
       pieces: this.pieces, sent: this.sent,
     });
     if (this.history.length > 1000) this.history.shift();
@@ -460,7 +475,7 @@ class Game {
     Object.assign(this, {
       board: h.board.map(r => r.slice()), queue: h.queue.slice(), rngState: h.rngState,
       hold: h.hold, canHold: h.canHold, cur: {...h.cur},
-      score: h.score, lines: h.lines, level: h.level, combo: h.combo, b2b: h.b2b,
+      score: h.score, lines: h.lines, level: h.level, combo: h.combo, b2bCount: h.b2bCount,
       pieces: h.pieces, sent: h.sent,
     });
     this.gravAcc = 0; this.lockTimer = 0; this.lockResets = 0; this.lowestY = this.cur.y; this.lastRotate = false;
@@ -633,7 +648,7 @@ ov.addEventListener('click', e => {
 game.on('clear', e => {
   if (e.rows.length) fx.push({t: performance.now(), rows: e.rows});
   const parts = [];
-  if (e.b2b) parts.push('<div class="b2b">Back-to-back</div>');
+  if (e.b2b) parts.push(`<div class="b2b${e.surge ? ' surge' : ''}">Back-to-back x${e.b2bCount - 1}${e.surge ? ' SURGE' : ''}</div>`);
   if (e.name && (e.lines >= 2 || e.tspin)) parts.push(`<div class="nm ${e.lines === 4 || e.tspin === 'full' ? 'big' : ''}">${e.name}</div>`);
   if (e.combo > 0) parts.push(`<div class="cb">${e.combo} combo</div>`);
   if (e.pc) parts.push('<div class="pc">All clear</div>');
