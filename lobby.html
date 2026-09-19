@@ -45,12 +45,12 @@ input.code{text-transform:uppercase;letter-spacing:.15em;font-weight:700;text-al
 .back:hover{color:var(--text)}
 [hidden]{display:none}
 
-/* Minimal motion: cards fade up when a screen appears (display:none -> shown
-   restarts the animation, so this also covers switching between screens). */
+/* Motion: cards slide up from the bottom when a screen appears (display:none
+   -> shown restarts the animation, so this also covers switching screens). */
 .btn,input{transition:border-color .15s,background-color .15s,outline-color .15s}
 @media (prefers-reduced-motion: no-preference){
-  @keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
-  .card{animation:fadeUp .25s ease-out backwards}
+  @keyframes slideUp{from{transform:translateY(40px)}to{transform:none}}
+  .card{animation:slideUp .35s cubic-bezier(.22,1,.36,1) backwards}
   .btn{transition:border-color .15s,background-color .15s,transform .1s}
   .btn:not(:disabled):active{transform:scale(.98)}
 }

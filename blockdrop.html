@@ -103,18 +103,15 @@ kbd{font:inherit;font-size:.78rem;font-weight:600;background:var(--panel);border
 @media (max-width:620px){ .side{width:96px} .stats .row{font-size:.78rem} }
 @media (prefers-reduced-motion: reduce){ .action.show{animation:none;opacity:1} }
 
-/* Minimal motion. "backwards" fill (not "forwards") so no leftover transform
-   lingers on .wrap after the entrance finishes. */
+/* Motion: everything slides up from the bottom (no fading). "backwards" fill
+   (not "forwards") so no leftover transform lingers after the entrance ends. */
 .btn,.bgSwatch{transition:border-color .15s,background-color .15s}
 @media (prefers-reduced-motion: no-preference){
-  @keyframes fadeIn{from{opacity:0}to{opacity:1}}
-  @keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
-  @keyframes popIn{from{opacity:0;transform:scale(.97)}to{opacity:1;transform:none}}
-  .wrap{animation:fadeUp .3s ease-out backwards}
-  .overlay:not(.hidden){animation:fadeIn .2s ease-out}
-  .modal:not(.hidden){animation:fadeIn .18s ease-out}
-  .modal:not(.hidden) .card{animation:popIn .2s ease-out}
-  .opponents > .opp{animation:fadeIn .3s ease-out backwards}
+  @keyframes slideUp{from{transform:translateY(40px)}to{transform:none}}
+  .wrap{animation:slideUp .35s cubic-bezier(.22,1,.36,1) backwards}
+  .overlay:not(.hidden){animation:slideUp .35s cubic-bezier(.22,1,.36,1)}
+  .modal:not(.hidden) .card{animation:slideUp .35s cubic-bezier(.22,1,.36,1)}
+  .opponents > .opp{animation:slideUp .35s cubic-bezier(.22,1,.36,1) backwards}
   .btn{transition:border-color .15s,background-color .15s,transform .1s}
   .btn:not(:disabled):active{transform:scale(.98)}
 }
@@ -926,6 +923,10 @@ function frame(t){
   drawBoard(); drawSide(); drawStats();
   requestAnimationFrame(frame);
 }
+// The slide-up entrance briefly pushes content past the bottom edge; keep the
+// page from flashing a scrollbar while it plays.
+document.documentElement.style.overflow = 'hidden';
+setTimeout(() => { document.documentElement.style.overflow = ''; }, 450);
 if (!new URLSearchParams(location.search).has('room')) menu();
 requestAnimationFrame(frame);
 </script>
