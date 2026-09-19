@@ -20,8 +20,16 @@
 
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--text);min-height:100vh;
-  font-family:'Chakra Petch',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}
-.wrap{max-width:920px;margin:0 auto;padding:14px 16px 32px;display:flex;flex-direction:column;align-items:center;gap:14px}
+  font-family:'Chakra Petch',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  background-size:cover;background-position:center;background-attachment:fixed;background-repeat:no-repeat}
+.bgSwatches{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:6px}
+.bgSwatch{width:56px;height:56px;border-radius:8px;border:2px solid var(--border);cursor:pointer;
+  background-size:cover;background-position:center;background-color:#000;padding:0;
+  display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:.7rem}
+.bgSwatch:hover{border-color:var(--muted)}
+.bgSwatch.selected{border-color:var(--accent)}
+#bgOverlay{position:fixed;inset:0;background:#000;opacity:.6;pointer-events:none;z-index:0}
+.wrap{max-width:920px;margin:0 auto;padding:14px 16px 32px;display:flex;flex-direction:column;align-items:center;gap:14px;position:relative;z-index:1}
 /* A 1v1 match needs room for two full boards side by side (~1200px) —
    the default max-width was sized for a single board and was forcing the
    opponent's panel to wrap onto its own row below instead of beside yours. */
@@ -114,6 +122,7 @@ kbd{font:inherit;font-size:.78rem;font-weight:600;background:var(--panel);border
 </style>
 </head>
 <body>
+<div id="bgOverlay"></div>
 <main class="wrap">
   <header>
     <h1>BlockDrop</h1>
@@ -184,6 +193,16 @@ kbd{font:inherit;font-size:.78rem;font-weight:600;background:var(--panel);border
       <div class="top"><label for="sdf">Soft drop speed</label><output id="sdfV"></output></div>
       <input type="range" id="sdf" min="5" max="41" step="1">
       <p>How many times faster than gravity soft drop falls. Max is instant.</p>
+    </div>
+    <div class="setting">
+      <div class="top"><label>Background</label></div>
+      <div class="bgSwatches" id="bgSwatches"></div>
+      <p>Panels turn translucent so the picture shows through behind the game.</p>
+    </div>
+    <div class="setting">
+      <div class="top"><label for="bgDark">Background darkness</label><output id="bgDarkV"></output></div>
+      <input type="range" id="bgDark" min="0" max="100" step="1">
+      <p>0 shows the picture fully, 100 is solid black.</p>
     </div>
     <div class="actions">
       <button class="btn" id="resetSettings">Reset to defaults</button>
@@ -597,9 +616,41 @@ const store = {
   get(k, d){ try { const v = localStorage.getItem('blockdrop:'+k); return v == null ? d : JSON.parse(v); } catch(e){ return d; } },
   set(k, v){ try { localStorage.setItem('blockdrop:'+k, JSON.stringify(v)); } catch(e){} },
 };
-const DEFAULTS = {das:133, arr:10, sdf:20};
+const DEFAULTS = {das:133, arr:10, sdf:20, bgDark:60};
 const settings = Object.assign({}, DEFAULTS, store.get('settings', {}));
 game.sdf = settings.sdf;
+
+// --- background ---
+// To add a preset: drop an image into backgrounds/ and add a line below —
+// { id: 'unique-id', name: 'Shown in the picker', image: 'backgrounds/file.jpg' }.
+const BACKGROUNDS = [
+  { id: 'none', name: 'None', image: null },
+];
+function applyBackground(id){
+  const bg = BACKGROUNDS.find(b => b.id === id) || BACKGROUNDS[0];
+  document.body.style.backgroundImage = bg.image ? `url("${bg.image}")` : 'none';
+  // Panels get a fixed translucency whenever a photo is active, independent
+  // of the darkness slider below (which only dims the photo itself) — so
+  // the UI stays legible no matter how dark or bright the picture is set.
+  const root = document.documentElement.style;
+  root.setProperty('--panel', bg.image ? 'rgba(13,13,13,.6)' : '#0d0d0d');
+  root.setProperty('--board', bg.image ? 'rgba(4,4,8,.55)' : '#000000');
+  readTheme();
+  store.set('background', bg.id);
+}
+function applyBgDarkness(){ $('#bgOverlay').style.opacity = settings.bgDark / 100; }
+function renderBgSwatches(){
+  const box = $('#bgSwatches');
+  const current = store.get('background', 'none');
+  box.innerHTML = BACKGROUNDS.map(b => `<button type="button" class="bgSwatch${b.id===current?' selected':''}" data-bg="${b.id}"
+    style="${b.image ? `background-image:url('${b.image}')` : ''}">${b.image ? '' : b.name}</button>`).join('');
+  box.querySelectorAll('.bgSwatch').forEach(el => el.addEventListener('click', () => {
+    applyBackground(el.dataset.bg);
+    box.querySelectorAll('.bgSwatch').forEach(x => x.classList.toggle('selected', x === el));
+  }));
+}
+applyBackground(store.get('background', 'none'));
+applyBgDarkness();
 
 // --- overlays ---
 const ov = $('#overlay');
@@ -753,11 +804,12 @@ const fields = [
   ['das', v => v + ' ms'],
   ['arr', v => v === 0 ? '0 (instant)' : v + ' ms'],
   ['sdf', v => v >= 41 ? 'Instant' : v + 'x'],
+  ['bgDark', v => v + '%'],
 ];
-function syncSettingsUI(){ for (const [k,f] of fields){ $('#'+k).value = settings[k]; $('#'+k+'V').textContent = f(settings[k]); } }
+function syncSettingsUI(){ for (const [k,f] of fields){ $('#'+k).value = settings[k]; $('#'+k+'V').textContent = f(settings[k]); } renderBgSwatches(); }
 for (const [k,f] of fields){
   $('#'+k).addEventListener('input', e => { settings[k] = +e.target.value; $('#'+k+'V').textContent = f(settings[k]);
-    game.sdf = settings.sdf; store.set('settings', settings); });
+    game.sdf = settings.sdf; applyBgDarkness(); store.set('settings', settings); });
 }
 function openSettings(){ if (game.state === 'playing' && !window.__mpActive) togglePause(); releaseAll(); syncSettingsUI(); $('#settings').classList.remove('hidden'); $('#closeSettings').focus(); }
 function closeSettings(){ $('#settings').classList.add('hidden'); $('#settingsBtn').blur(); }
