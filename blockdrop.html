@@ -61,6 +61,7 @@ h1{margin:0;font-size:1.5rem;font-weight:700;letter-spacing:.02em}
 .boardWrap{position:relative;height:min(82vh,660px);aspect-ratio:300/660;flex-shrink:0}
 #board{width:100%;height:100%;display:block}
 .overlay{position:absolute;left:0;right:0;top:9.0909%;bottom:0;background:var(--overlay);color:#f2f4fa;
+  border:1px solid var(--border);border-radius:10px;
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;padding:18px}
 .overlay.hidden{display:none}
 .overlay .title{font-size:2.1rem;font-weight:700;line-height:1}
@@ -89,7 +90,8 @@ kbd{font:inherit;font-size:.78rem;font-weight:600;background:var(--panel);border
 
 .modal{position:fixed;inset:0;background:rgba(8,10,20,.55);display:flex;align-items:center;justify-content:center;padding:16px;z-index:10}
 .modal.hidden{display:none}
-.card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:20px 22px;width:min(420px,100%)}
+.card{background:#0d0d0d;border:1px solid var(--border);border-radius:12px;padding:20px 22px;width:min(420px,100%)}   /* solid on purpose: --panel turns translucent when a background picture is on, which made settings hard to read */
+.game.menuMode .side{visibility:hidden}   /* mode picker: hide Hold/Next/score until a game actually starts */
 .card h2{margin:0 0 12px;font-size:1.25rem}
 .setting{margin-bottom:14px}
 .setting .top{display:flex;justify-content:space-between;font-weight:600}
@@ -735,6 +737,7 @@ applyBgDarkness();
 const ov = $('#overlay');
 function overlay(html){ if (html == null){ ov.classList.add('hidden'); return; } ov.innerHTML = html; ov.classList.remove('hidden'); }
 function menu(){
+  document.querySelector('.game').classList.add('menuMode');
   const best = store.get('best40', null), high = store.get('highMarathon', 0);
   overlay(`<div class="title">BlockDrop<small>Pick a mode</small></div>
     <div class="modes">
@@ -748,6 +751,7 @@ function menu(){
 }
 let cdTimer = null, mode = 'marathon';
 function begin(m){
+  document.querySelector('.game').classList.remove('menuMode');
   mode = m; clearTimeout(cdTimer);
   game.prepare(m); fx = [];
   $('#action').className = 'action';
