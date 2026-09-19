@@ -553,7 +553,8 @@ function setupCanvas(cv, w, h){
   cv.width = w*d; cv.height = h*d;
   const ctx = cv.getContext('2d'); ctx.setTransform(d,0,0,d,0,0); return ctx;
 }
-const bctx = setupCanvas($('#board'), BW, BH);
+const boardEl = $('#board');
+const bctx = setupCanvas(boardEl, BW, BH);
 const hctx = setupCanvas($('#hold'), 120, 76);
 const nctx = setupCanvas($('#next'), 120, 330);
 
@@ -589,8 +590,15 @@ function drawMini(c, type, cx, cy, s, color){
 let fx = [];
 function drawBoard(){
   const c = bctx, top = 2*CS;
+  // Same corner radius as the overlay box (10 CSS px), converted to canvas
+  // units since the canvas is scaled to fit the page — so the frame under the
+  // mode picker/countdown box has matching curves instead of square corners.
+  const rad = 10 * BW / (boardEl.clientWidth || BW);
   c.clearRect(0,0,BW,BH);
-  c.fillStyle = theme.board; c.fillRect(0, top, BW, VISIBLE*CS);
+  c.fillStyle = theme.board; c.beginPath(); c.roundRect(0, top, BW, VISIBLE*CS, rad); c.fill();
+  // Clip locked cells/grid/flash to the rounded frame; the strip above it stays
+  // open because the active piece spawns up in the hidden rows.
+  c.save(); c.beginPath(); c.rect(0, 0, BW, top + rad); c.roundRect(0, top, BW, VISIBLE*CS, rad); c.clip();
   c.strokeStyle = theme.grid; c.lineWidth = 1; c.beginPath();
   for (let x=1;x<COLS;x++){ c.moveTo(x*CS+.5, top); c.lineTo(x*CS+.5, BH); }
   for (let y=1;y<VISIBLE;y++){ c.moveTo(0, top+y*CS+.5); c.lineTo(BW, top+y*CS+.5); }
@@ -613,8 +621,9 @@ function drawBoard(){
     c.fillStyle = `rgba(255,255,255,${(1-(now-f.t)/240)*.85})`;
     for (const r of f.rows) c.fillRect(0, (r-OFF)*CS, BW, CS);
   }
+  c.restore();
   c.strokeStyle = danger && !dead ? theme.danger : theme.frame; c.lineWidth = 2;
-  c.strokeRect(1, top+1, BW-2, VISIBLE*CS-2);
+  c.beginPath(); c.roundRect(1, top+1, BW-2, VISIBLE*CS-2, Math.max(0, rad-1)); c.stroke();
 }
 function drawSide(){
   hctx.clearRect(0,0,120,76);
@@ -1263,7 +1272,8 @@ async function mpBoot(code){
       const logicalW = big ? 300 : boardCv.width;
       const logicalH = big ? 660 : boardCv.height;
       ctx.clearRect(0, 0, logicalW, logicalH);
-      if (big){ ctx.fillStyle = '#000'; ctx.fillRect(0, topOffset, logicalW, MVISIBLE*cell); }
+      const rad = big ? 10 * 300 / (boardCv.clientWidth || 300) : 0;   // same 10 CSS px curve as your own board's frame
+      if (big){ ctx.fillStyle = '#000'; ctx.beginPath(); ctx.roundRect(0, topOffset, logicalW, MVISIBLE*cell, rad); ctx.fill(); }
       for (let y = 0; y < b.rows.length; y++){
         const row = b.rows[y];
         for (let x = 0; x < MCOLS; x++){
@@ -1271,7 +1281,7 @@ async function mpBoot(code){
           if (t !== '0') drawCell(ctx, x*cell, topOffset + y*cell, cell, alive ? (OPP_COLORS[t] || '#888') : '#3a3a3a');
         }
       }
-      if (big){ ctx.strokeStyle = '#3a3a3a'; ctx.lineWidth = 2; ctx.strokeRect(1, topOffset+1, logicalW-2, MVISIBLE*cell-2); }
+      if (big){ ctx.strokeStyle = '#3a3a3a'; ctx.lineWidth = 2; ctx.beginPath(); ctx.roundRect(1, topOffset+1, logicalW-2, MVISIBLE*cell-2, Math.max(0, rad-1)); ctx.stroke(); }
 
       // Same layout math as drawSide() for your own Hold/Next, at the same
       // logical size (setupCanvas applied a devicePixelRatio transform, so
