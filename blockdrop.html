@@ -112,6 +112,10 @@ kbd{font:inherit;font-size:.78rem;font-weight:600;background:var(--panel);border
   .overlay:not(.hidden){animation:slideUp .35s cubic-bezier(.22,1,.36,1)}
   .modal:not(.hidden) .card{animation:slideUp .35s cubic-bezier(.22,1,.36,1)}
   .opponents > .opp{animation:slideUp .35s cubic-bezier(.22,1,.36,1) backwards}
+  /* Picking a mode: left panel, board and right panel rise in one after another. */
+  .game.enter .side,.game.enter .boardWrap{animation:slideUp .4s cubic-bezier(.22,1,.36,1) backwards}
+  .game.enter .boardWrap{animation-delay:.06s}
+  .game.enter .side:last-child{animation-delay:.12s}
   .btn{transition:border-color .15s,background-color .15s,transform .1s}
   .btn:not(:disabled):active{transform:scale(.98)}
 }
@@ -763,8 +767,19 @@ function menu(){
     <button class="btn" data-act="exit-to-lobby" style="width:80%">Exit to lobby</button>`);
 }
 let cdTimer = null, mode = 'marathon';
+let enterTimer = null;
 function begin(m){
-  document.querySelector('.game').classList.remove('menuMode');
+  const gameEl = document.querySelector('.game');
+  const fromMenu = gameEl.classList.contains('menuMode');
+  gameEl.classList.remove('menuMode');
+  if (fromMenu){
+    // Replay the slide-up for the panels + board that were hidden in the mode
+    // picker (only when coming from it, not on a mid-game restart).
+    gameEl.classList.remove('enter'); void gameEl.offsetWidth; gameEl.classList.add('enter');
+    clearTimeout(enterTimer); enterTimer = setTimeout(() => gameEl.classList.remove('enter'), 700);
+    document.documentElement.style.overflow = 'hidden';
+    setTimeout(() => { document.documentElement.style.overflow = ''; }, 700);
+  }
   mode = m; clearTimeout(cdTimer);
   game.prepare(m); fx = [];
   $('#action').className = 'action';
