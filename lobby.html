@@ -95,6 +95,17 @@ import { initFirebase, signIn, createRoom, joinRoom, watchRoom, setReady, leaveR
 const $ = s => document.querySelector(s);
 const show = id => { for (const s of ['screenLanding','screenHome','screenRoom','screenStarting']) $('#'+s).hidden = (s !== id); };
 
+// Coming back here as ?room=CODE means a match just ended and we're
+// rejoining the same room's ready-up screen — decide that BEFORE boot()'s
+// async sign-in/rejoin work starts, so the singleplayer/multiplayer screen
+// (visible by default in the HTML) never gets a chance to paint at all,
+// instead of flashing it until boot() finishes and switches away.
+const rejoinCode = new URLSearchParams(location.search).get('room');
+if (rejoinCode){
+  $('#startingSub').textContent = 'Rejoining room…';
+  show('screenStarting');
+}
+
 $('#soloBtn').addEventListener('click', () => location.href = 'blockdrop.html');
 $('#mpBtn').addEventListener('click', () => show('screenHome'));
 $('#backToLandingBtn').addEventListener('click', () => show('screenLanding'));
@@ -103,6 +114,7 @@ let db, auth, uid, code, unwatch, myReady = false, started = false, matchAttempt
 
 async function boot(){
   if (firebaseConfig.apiKey === 'PASTE_ME'){
+    show('screenLanding');
     $('#homeMsg').textContent = 'Add your Firebase config in firebase-config.js first — see README.md.';
     $('#createBtn').disabled = $('#joinBtn').disabled = true;
     return;
@@ -119,11 +131,11 @@ async function boot(){
   // instead of the home screen — the room's already been reset to
   // "waiting" and this player already has a slot in it, so this is a
   // rejoin (same path a refresh takes), not a fresh join.
-  const rejoinCode = new URLSearchParams(location.search).get('room');
   if (rejoinCode && saved.name){
     const r = await joinRoom(db, rejoinCode, uid, saved.name);
-    if (r.ok){ code = rejoinCode; await enterRoom(saved.name); }
+    if (r.ok){ code = rejoinCode; await enterRoom(saved.name); return; }
   }
+  if (rejoinCode) show('screenLanding');   // rejoin didn't work out — don't strand them on the loading screen
 }
 boot();
 
