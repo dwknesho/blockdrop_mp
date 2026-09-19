@@ -28,6 +28,11 @@ body{margin:0;background:var(--bg);color:var(--text);min-height:100vh;
   display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:.7rem}
 .bgSwatch:hover{border-color:var(--muted)}
 .bgSwatch.selected{border-color:var(--accent)}
+.bgSwatch.bgAdd{font-size:1.5rem;font-weight:700}
+.bgItem{position:relative}
+.bgDel{position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;border:1px solid var(--border);
+  background:#1a1a1a;color:var(--text);font-size:.85rem;line-height:1;cursor:pointer;padding:0}
+.bgDel:hover{background:var(--danger);border-color:var(--danger)}
 #bgOverlay{position:fixed;inset:0;background:#000;opacity:.6;pointer-events:none;z-index:0}
 .wrap{max-width:920px;margin:0 auto;padding:14px 16px 32px;display:flex;flex-direction:column;align-items:center;gap:14px;position:relative;z-index:1}
 /* A 1v1 match needs room for two full boards side by side (~1200px) —
@@ -197,7 +202,9 @@ kbd{font:inherit;font-size:.78rem;font-weight:600;background:var(--panel);border
     <div class="setting">
       <div class="top"><label>Background</label></div>
       <div class="bgSwatches" id="bgSwatches"></div>
-      <p>Panels turn translucent so the picture shows through behind the game.</p>
+      <input type="file" id="bgFile" accept="image/*" hidden>
+      <p id="bgMsg" style="color:var(--danger)"></p>
+      <p>Upload your own picture with +. It's saved only in this browser (up to 8), and panels turn translucent so it shows through behind the game.</p>
     </div>
     <div class="setting">
       <div class="top"><label for="bgDark">Background darkness</label><output id="bgDarkV"></output></div>
@@ -620,36 +627,108 @@ const DEFAULTS = {das:133, arr:10, sdf:20, bgDark:60};
 const settings = Object.assign({}, DEFAULTS, store.get('settings', {}));
 game.sdf = settings.sdf;
 
-// --- background ---
-// To add a preset: drop an image into backgrounds/ and add a line below —
-// { id: 'unique-id', name: 'Shown in the picker', image: 'backgrounds/file.jpg' }.
-const BACKGROUNDS = [
-  { id: 'none', name: 'None', image: null },
-];
+// --- background (custom uploads) ---
+// Players upload their own pictures; they're stored in this browser's
+// IndexedDB (localStorage is too small for images), so there's no account
+// or server involved — a background lives on that device only.
+const MAX_BACKGROUNDS = 8, MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+const bgDB = {
+  db: null,
+  open(){
+    if (this.db) return Promise.resolve(this.db);
+    return new Promise((res, rej) => {
+      const r = indexedDB.open('blockdrop', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('backgrounds', {keyPath: 'id'});
+      r.onsuccess = () => { this.db = r.result; res(this.db); };
+      r.onerror = () => rej(r.error);
+    });
+  },
+  async run(mode, fn){
+    const db = await this.open();
+    return new Promise((res, rej) => {
+      const t = db.transaction('backgrounds', mode), req = fn(t.objectStore('backgrounds'));
+      t.oncomplete = () => res(req.result); t.onerror = () => rej(t.error);
+    });
+  },
+  all(){ return this.run('readonly', s => s.getAll()); },
+  put(item){ return this.run('readwrite', s => s.put(item)); },
+  del(id){ return this.run('readwrite', s => s.delete(id)); },
+};
+let bgItems = [];   // { id, name, blob, url, created }
+function bgMsg(t){ const el = $('#bgMsg'); if (el) el.textContent = t || ''; }
+
+// Downscale to at most 1920px on the long edge and re-encode as JPEG, so a
+// 12 MB phone photo doesn't eat the browser's storage quota.
+async function compressImage(file){
+  const bmp = await createImageBitmap(file);
+  const scale = Math.min(1, 1920 / Math.max(bmp.width, bmp.height));
+  const cv = document.createElement('canvas');
+  cv.width = Math.round(bmp.width * scale); cv.height = Math.round(bmp.height * scale);
+  cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
+  if (bmp.close) bmp.close();
+  return new Promise((res, rej) => cv.toBlob(b => b ? res(b) : rej(new Error('encode failed')), 'image/jpeg', 0.85));
+}
+
 function applyBackground(id){
-  const bg = BACKGROUNDS.find(b => b.id === id) || BACKGROUNDS[0];
-  document.body.style.backgroundImage = bg.image ? `url("${bg.image}")` : 'none';
-  // Panels get a fixed translucency whenever a photo is active, independent
-  // of the darkness slider below (which only dims the photo itself) — so
+  const bg = bgItems.find(b => b.id === id);
+  document.body.style.backgroundImage = bg ? `url("${bg.url}")` : 'none';
+  // Panels get a fixed translucency whenever a picture is active, independent
+  // of the darkness slider below (which only dims the picture itself) — so
   // the UI stays legible no matter how dark or bright the picture is set.
   const root = document.documentElement.style;
-  root.setProperty('--panel', bg.image ? 'rgba(13,13,13,.6)' : '#0d0d0d');
-  root.setProperty('--board', bg.image ? 'rgba(4,4,8,.55)' : '#000000');
+  root.setProperty('--panel', bg ? 'rgba(13,13,13,.6)' : '#0d0d0d');
+  root.setProperty('--board', bg ? 'rgba(4,4,8,.55)' : '#000000');
   readTheme();
-  store.set('background', bg.id);
+  store.set('background', bg ? bg.id : 'none');
 }
 function applyBgDarkness(){ $('#bgOverlay').style.opacity = settings.bgDark / 100; }
 function renderBgSwatches(){
-  const box = $('#bgSwatches');
   const current = store.get('background', 'none');
-  box.innerHTML = BACKGROUNDS.map(b => `<button type="button" class="bgSwatch${b.id===current?' selected':''}" data-bg="${b.id}"
-    style="${b.image ? `background-image:url('${b.image}')` : ''}">${b.image ? '' : b.name}</button>`).join('');
-  box.querySelectorAll('.bgSwatch').forEach(el => el.addEventListener('click', () => {
-    applyBackground(el.dataset.bg);
-    box.querySelectorAll('.bgSwatch').forEach(x => x.classList.toggle('selected', x === el));
-  }));
+  const tiles = [`<div class="bgItem"><button type="button" class="bgSwatch${current === 'none' ? ' selected' : ''}" data-bg="none">None</button></div>`];
+  for (const b of bgItems){
+    tiles.push(`<div class="bgItem"><button type="button" class="bgSwatch${b.id === current ? ' selected' : ''}" data-bg="${b.id}" style="background-image:url('${b.url}')"></button>
+      <button type="button" class="bgDel" data-del="${b.id}" title="Delete this background" aria-label="Delete this background">×</button></div>`);
+  }
+  if (bgItems.length < MAX_BACKGROUNDS) tiles.push('<div class="bgItem"><button type="button" class="bgSwatch bgAdd" data-add="1" title="Upload a picture">+</button></div>');
+  $('#bgSwatches').innerHTML = tiles.join('');
 }
-applyBackground(store.get('background', 'none'));
+$('#bgSwatches').addEventListener('click', async e => {
+  const sw = e.target.closest('[data-bg]'), del = e.target.closest('[data-del]'), add = e.target.closest('[data-add]');
+  if (add){ $('#bgFile').click(); return; }
+  if (sw){ applyBackground(sw.dataset.bg); renderBgSwatches(); return; }
+  if (del){
+    if (!confirm('Delete this background?')) return;
+    const id = del.dataset.del, i = bgItems.findIndex(b => b.id === id);
+    try { await bgDB.del(id); } catch(err){ bgMsg('Could not delete it.'); return; }
+    if (i >= 0){ URL.revokeObjectURL(bgItems[i].url); bgItems.splice(i, 1); }
+    if (store.get('background', 'none') === id) applyBackground('none');
+    renderBgSwatches(); bgMsg('');
+  }
+});
+$('#bgFile').addEventListener('change', async e => {
+  const file = e.target.files[0]; e.target.value = '';
+  if (!file) return;
+  if (!file.type.startsWith('image/')) return bgMsg('That file is not an image.');
+  if (file.size > MAX_UPLOAD_BYTES) return bgMsg('That image is too large (25 MB max).');
+  if (bgItems.length >= MAX_BACKGROUNDS) return bgMsg('Delete one first — 8 backgrounds max.');
+  bgMsg('Saving…');
+  try {
+    const blob = await compressImage(file);
+    const item = { id: 'u' + Date.now(), name: file.name, blob, created: Date.now() };
+    await bgDB.put(item);
+    item.url = URL.createObjectURL(blob);
+    bgItems.push(item);
+    applyBackground(item.id); renderBgSwatches(); bgMsg('');
+  } catch(err){ bgMsg('Could not save that image in this browser.'); }
+});
+(async () => {
+  try {
+    const rows = (await bgDB.all()).sort((a, b) => a.created - b.created);
+    bgItems = rows.map(r => ({ ...r, url: URL.createObjectURL(r.blob) }));
+  } catch(err){ bgItems = []; }   // e.g. private browsing blocks IndexedDB — backgrounds just stay off
+  applyBackground(store.get('background', 'none'));
+  renderBgSwatches();
+})();
 applyBgDarkness();
 
 // --- overlays ---
