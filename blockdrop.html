@@ -93,9 +93,10 @@ kbd{font:inherit;font-size:.78rem;font-weight:600;background:var(--panel);border
 .game.menuMode .side{visibility:hidden}   /* mode picker: hide Hold/Next/score until a game actually starts */
 .card h2{margin:0 0 12px;font-size:1.25rem}
 .setting{margin-bottom:14px}
-.setting .top{display:flex;justify-content:space-between;font-weight:600}
+.setting .top{display:flex;justify-content:space-between;align-items:center;font-weight:600}
 .setting output{font-variant-numeric:tabular-nums;color:var(--muted)}
 .setting input{width:100%;accent-color:var(--accent)}
+.setting input.chk{width:18px;height:18px;flex:none;cursor:pointer}
 .setting p{margin:2px 0 0;font-size:.82rem;color:var(--muted)}
 .card .actions{display:flex;justify-content:space-between;gap:8px;margin-top:6px}
 
@@ -142,6 +143,142 @@ kbd{font:inherit;font-size:.78rem;font-weight:600;background:var(--panel);border
 .garbageWarn{position:absolute;left:-10px;top:9.0909%;bottom:0;width:7px;display:flex;flex-direction:column;justify-content:flex-end}
 .garbageWarn[hidden]{display:none}
 .garbageWarn .fill{background:var(--danger);width:100%;border-radius:3px;transition:height .15s ease-out}
+
+/* =====================================================================
+   FX LAYER — danger, attacks and spins.
+   One vocabulary across all three so they read as the same game:
+     red (--danger)  = threat: you are high, garbage is inbound
+     amber (--accent)= power: you are sending
+     piece colour    = skill: you spun something
+   Shapes are hard-edged (bars, chevrons, brackets) to match the blocks,
+   and every timing uses the same snap-in / drift-out easing as the rest
+   of the UI. Anything expensive is a short-lived element that removes
+   itself; the per-frame work all happens on the board canvas.
+   ===================================================================== */
+.boardWrap{--sk:0}
+.fxRoot{position:absolute;inset:0;pointer-events:none;overflow:hidden}   /* every burst is clipped to the board */
+.fxPlay{position:absolute;left:0;right:0;top:9.0909%;bottom:0}   /* the visible board, minus the buffer rows */
+
+/* ---------- danger: the stack is getting close to the top ---------- */
+.dangerHud{position:absolute;inset:0;pointer-events:none;opacity:0;
+  transition:opacity .3s ease}
+.dangerHud.on{opacity:1}
+.dangerHud .hz{position:absolute;left:-2px;right:-2px;height:13px;overflow:hidden;opacity:.9}
+.dangerHud .hz::before{content:"";position:absolute;inset:-2px -60px;
+  background:repeating-linear-gradient(-45deg,var(--danger) 0 13px,rgba(10,0,2,.92) 13px 30px);
+  animation:hzRun 1.1s linear infinite}
+.dangerHud .hzTop{top:0}
+.dangerHud .hzBot{bottom:0}
+.dangerHud .hzBot::before{animation-direction:reverse}
+.dangerHud .glow{position:absolute;inset:0;
+  background:linear-gradient(180deg,rgba(255,90,106,.55),rgba(255,90,106,.14) 30%,transparent 58%),
+             radial-gradient(120% 60% at 50% 0%,rgba(255,90,106,.3),transparent 70%);
+  animation:dangerBreath var(--beat,1.1s) ease-in-out infinite}
+.dangerHud .cnr{position:absolute;width:22px;height:22px;border:3px solid var(--danger);
+  box-shadow:0 0 14px rgba(255,90,106,.75);animation:cnrPulse var(--beat,1.1s) ease-in-out infinite}
+.dangerHud .cnr.tl{top:15px;left:1px;border-right:0;border-bottom:0}
+.dangerHud .cnr.tr{top:15px;right:1px;border-left:0;border-bottom:0}
+.dangerHud .cnr.bl{bottom:15px;left:1px;border-right:0;border-top:0}
+.dangerHud .cnr.br{bottom:15px;right:1px;border-left:0;border-top:0}
+/* The tag lives in the two buffer rows above the board, so it never sits
+   on top of the stack it is warning you about. */
+.dangerTag{position:absolute;top:0;left:0;right:0;height:9.0909%;
+  display:flex;align-items:center;justify-content:center;gap:9px;
+  color:var(--danger);font-weight:700;text-shadow:0 0 14px rgba(255,90,106,.85);
+  animation:tagBlink var(--beat,1.1s) steps(1,end) infinite}
+.dangerTag b{font-size:.92rem;letter-spacing:.34em}
+.dangerTag i{font-style:normal;font-size:.86rem;letter-spacing:.12em;opacity:.9}
+.dangerTag::before,.dangerTag::after{content:"";width:24px;height:3px;background:var(--danger);
+  box-shadow:0 0 10px rgba(255,90,106,.8)}
+.dangerHud.crit .glow{background:linear-gradient(180deg,rgba(255,90,106,.78),rgba(255,90,106,.24) 34%,rgba(255,90,106,.05) 70%),
+             radial-gradient(120% 60% at 50% 0%,rgba(255,90,106,.42),transparent 70%)}
+.dangerHud.crit .hz{opacity:1;height:16px}
+.dangerHud.crit .dangerTag b,.dangerHud.crit .dangerTag i{font-size:1.02rem}
+
+/* ---------- sending: a clear that leaves the board as an attack ---------- */
+.sendBurst{position:absolute;top:9.0909%;bottom:0;right:0;width:190px;
+  display:flex;align-items:center;justify-content:flex-end;gap:5px;padding-right:72px}
+.sendBurst i{width:11px;height:34px;background:var(--accent);opacity:0;flex:none;
+  filter:drop-shadow(0 0 10px rgba(255,201,60,.95));
+  clip-path:polygon(0 0,58% 0,100% 50%,58% 100%,0 100%,42% 50%);
+  animation:chevFly .5s cubic-bezier(.22,1,.36,1) forwards}
+.sendBurst b{position:absolute;right:6px;top:50%;font-size:1.7rem;font-weight:800;
+  color:var(--accent);white-space:nowrap;letter-spacing:.02em;
+  text-shadow:0 0 26px rgba(255,201,60,.95),0 0 10px rgba(255,201,60,.8),0 2px 6px #000,0 0 4px #000;
+  animation:sendCount .7s cubic-bezier(.22,1,.36,1) forwards}
+.sendSweep{position:absolute;left:0;right:0;top:9.0909%;bottom:0;
+  background:linear-gradient(90deg,transparent 48%,rgba(255,201,60,.18) 76%,rgba(255,201,60,.5));
+  mix-blend-mode:screen;opacity:0;animation:sweepOut .42s cubic-bezier(.22,1,.36,1) forwards}
+.sendEdge{position:absolute;top:9.0909%;bottom:0;right:0;width:7px;background:var(--accent);
+  box-shadow:0 0 34px 8px rgba(255,201,60,.85);opacity:0;
+  animation:edgeFlash .45s cubic-bezier(.22,1,.36,1) forwards}
+/* the opponent on the receiving end lights up on their own panel; in a 1v1
+   the panel itself is frameless, so the flash goes on their board instead */
+.opp.hit{animation:oppHit .5s cubic-bezier(.22,1,.36,1)}
+.opp.big.hit{animation:none}
+.opp.big.hit .boardWrap{animation:oppHit .5s cubic-bezier(.22,1,.36,1)}
+
+/* ---------- receiving: garbage lands ---------- */
+.recvFlash{position:absolute;left:0;right:0;bottom:0;height:42%;
+  background:linear-gradient(0deg,rgba(255,90,106,.7),rgba(255,90,106,.2) 45%,transparent);
+  mix-blend-mode:screen;opacity:0;animation:recvUp .46s cubic-bezier(.22,1,.36,1) forwards}
+.recvBar{position:absolute;left:0;right:0;bottom:0;height:8px;background:var(--danger);
+  box-shadow:0 0 34px 9px rgba(255,90,106,.9);opacity:0;
+  animation:edgeFlash .45s cubic-bezier(.22,1,.36,1) forwards}
+.boardWrap.shake{animation:shakeFx .38s cubic-bezier(.36,.07,.19,.97)}
+.garbageWarn.pulse .fill{animation:warnPulse .4s ease-out}
+
+/* ---------- spins ---------- */
+.spinTag{position:absolute;left:50%;top:38%;transform:translate(-50%,-50%);
+  font-weight:800;font-size:1.18rem;letter-spacing:.16em;white-space:nowrap;
+  padding:3px 12px;border-radius:5px;background:rgba(0,0,0,.66);
+  border:1px solid currentColor;color:var(--spin,#fff);opacity:0;
+  text-shadow:0 0 18px currentColor,0 1px 3px #000;
+  box-shadow:0 0 22px rgba(0,0,0,.6),inset 0 0 18px rgba(255,255,255,.07);
+  animation:spinTag .85s cubic-bezier(.22,1,.36,1) forwards}
+
+/* ---------- the shared keyframe set ---------- */
+@keyframes hzRun{to{transform:translateX(-42.43px)}}   /* one full 30px diagonal period */
+@keyframes dangerBreath{0%,100%{opacity:.45}50%{opacity:1}}
+@keyframes cnrPulse{0%,100%{opacity:.5;transform:scale(1)}50%{opacity:1;transform:scale(1.14)}}
+@keyframes tagBlink{0%,64%{opacity:1}65%,100%{opacity:.25}}
+@keyframes chevFly{0%{opacity:0;transform:translateX(-34px) scaleX(.6)}
+  22%{opacity:1;transform:translateX(-14px) scaleX(1)}
+  100%{opacity:0;transform:translateX(16px) scaleX(1)}}
+@keyframes sendCount{0%{opacity:0;transform:translate(-30px,-50%) scale(.6)}
+  26%{opacity:1;transform:translate(-8px,-50%) scale(1.18)}
+  46%{transform:translate(-4px,-50%) scale(1)}
+  100%{opacity:0;transform:translate(30px,-50%) scale(1)}}
+@keyframes sweepOut{0%{opacity:0;transform:translateX(-9%)}
+  26%{opacity:.85}100%{opacity:0;transform:translateX(7%)}}
+@keyframes edgeFlash{0%{opacity:0;transform:scaleY(.2)}18%{opacity:1;transform:scaleY(1)}
+  100%{opacity:0;transform:scaleY(1)}}
+@keyframes oppHit{0%{box-shadow:0 0 0 0 rgba(255,90,106,0)}
+  18%{box-shadow:0 0 22px 3px rgba(255,90,106,.85);transform:translateY(3px)}
+  100%{box-shadow:0 0 0 0 rgba(255,90,106,0);transform:none}}
+@keyframes recvUp{0%{opacity:0;transform:translateY(34%)}20%{opacity:1;transform:none}
+  100%{opacity:0;transform:none}}
+@keyframes warnPulse{0%{filter:brightness(2.6)}100%{filter:none}}
+@keyframes shakeFx{
+  0%{transform:translate(0,0)}
+  12%{transform:translate(calc(var(--sk)*-1px),calc(var(--sk)*.7px))}
+  28%{transform:translate(calc(var(--sk)*.8px),calc(var(--sk)*-.5px))}
+  45%{transform:translate(calc(var(--sk)*-.6px),calc(var(--sk)*.4px))}
+  63%{transform:translate(calc(var(--sk)*.4px),calc(var(--sk)*.3px))}
+  82%{transform:translate(calc(var(--sk)*-.2px),0)}
+  100%{transform:translate(0,0)}}
+@keyframes spinTag{0%{opacity:0;transform:translate(-50%,-50%) scale(.5) rotate(-12deg)}
+  22%{opacity:1;transform:translate(-50%,-50%) scale(1.14) rotate(0deg)}
+  38%{transform:translate(-50%,-50%) scale(1)}
+  72%{opacity:1}
+  100%{opacity:0;transform:translate(-50%,-78%) scale(1)}}
+
+@media (prefers-reduced-motion: reduce){
+  .boardWrap.shake{animation:none}
+  .dangerHud .hz::before,.dangerHud .glow,.dangerHud .cnr,.dangerTag{animation:none}
+  .dangerHud .glow{opacity:.8}
+  .dangerHud .cnr{opacity:1}
+}
 </style>
 </head>
 <body>
@@ -173,6 +310,17 @@ kbd{font:inherit;font-size:.78rem;font-weight:600;background:var(--panel);border
 
       <div class="boardWrap">
         <canvas id="board"></canvas>
+        <div class="dangerHud" id="dangerHud" aria-hidden="true">
+          <div class="fxPlay">
+            <div class="glow"></div>
+            <div class="hz hzTop"></div>
+            <div class="hz hzBot"></div>
+            <div class="cnr tl"></div><div class="cnr tr"></div>
+            <div class="cnr bl"></div><div class="cnr br"></div>
+          </div>
+          <div class="dangerTag"><b>CAUTION</b><i>危険</i></div>
+        </div>
+        <div class="fxRoot" id="fxRoot" aria-hidden="true"></div>
         <div class="garbageWarn" id="garbageWarn" hidden><div class="fill" id="garbageFill"></div></div>
         <div class="overlay" id="overlay"></div>
       </div>
@@ -228,6 +376,10 @@ kbd{font:inherit;font-size:.78rem;font-weight:600;background:var(--panel);border
       <div class="top"><label for="bgDark">Background darkness</label><output id="bgDarkV"></output></div>
       <input type="range" id="bgDark" min="0" max="100" step="1">
       <p>0 shows the picture fully, 100 is solid black.</p>
+    </div>
+    <div class="setting">
+      <div class="top"><label for="shake">Screen shake</label><input type="checkbox" id="shake" class="chk"></div>
+      <p>Your board kicks when garbage lands on it. Turn it off if the jolt makes your stack hard to read mid-match.</p>
     </div>
     <div class="actions">
       <button class="btn" id="resetSettings">Reset to defaults</button>
@@ -287,6 +439,11 @@ const COMBO_ATTACK = [0,0,1,1,1,2,2,3,3,4,4,4,5];
 // difficult clear (displayed as "B2B x4"), each further consecutive clear
 // adds one more line on top of the flat B2B bonus, uncapped.
 const B2B_SURGE_STREAK = 5;
+
+// Rows of headroom at which the danger state starts creeping in. At 6 rows
+// left it is a faint hum; with the stack against the ceiling it is at full
+// volume. Tuned so it fires while you can still dig out, not as an obituary.
+const DANGER_ROWS = 6;
 
 
 function cellsOf(p){
@@ -435,8 +592,22 @@ class Game {
     return (frontBoth || this.lastKick === 4) ? 'full' : 'mini';
   }
 
+  // Visual only: the immobility test the "all-spin" rulesets use. If a piece
+  // arrived by rotation and can't be nudged in any direction afterwards, it
+  // was spun into place. T is excluded because detectTSpin() above is the
+  // authority on those. Deliberately kept out of scoreClear(): this drives
+  // the spin effect and its label, and changes no points and no attack.
+  detectSpin(){
+    if (!this.lastRotate || this.cur.type === 'T' || this.cur.type === 'O') return null;
+    const p = this.cur;
+    for (const [dx,dy] of [[0,-1],[-1,0],[1,0],[0,1]])
+      if (!this.collides({...p, x:p.x+dx, y:p.y+dy})) return null;
+    return p.type;
+  }
+
   lock(){
     const p = this.cur, tspin = this.detectTSpin();
+    const spin = tspin ? 'T' : this.detectSpin(), spinCells = spin ? cellsOf(p) : null;
     let allAbove = true;
     for (const [x,y] of cellsOf(p)){ this.board[y][x] = p.type; if (y >= HIDDEN) allAbove = false; }
     this.pieces++;
@@ -450,6 +621,7 @@ class Game {
     // know precisely when to apply queued garbage vs. cancel it against an
     // outgoing attack, with no polling/timing guesswork.
     this.emit('lock', { attack: atk, cleared: full.length > 0 });
+    if (spin) this.emit('spin', { type: spin, tspin, cells: spinCells, lines: full.length });
     if (allAbove && full.length === 0){ this.gameOver('Locked above the board'); return; }
     if (this.mode === 'sprint' && this.lines >= 40){ this.state = 'won'; this.emit('won', {time:this.time}); return; }
     this.spawn();
@@ -530,12 +702,15 @@ class Game {
 
   // For Phase 3: push garbage lines up from the bottom with one hole.
   addGarbage(n, hole = Math.floor(Math.random()*COLS)){
+    let added = 0;
     for (let i=0;i<n;i++){
       const top = this.board.shift();
       if (top.some(c => c)){ this.board.unshift(top); this.gameOver('Pushed out by garbage'); return; }
       const row = Array(COLS).fill('G'); row[hole] = null; this.board.push(row);
+      added++;
     }
     if (this.cur) while (this.collides(this.cur) && this.cur.y > 0) this.cur.y--;
+    if (added) this.emit('garbage', { lines: added });
   }
 
   gameOver(reason){ this.state = 'over'; this.emit('over', {reason}); }
@@ -586,6 +761,49 @@ function drawMini(c, type, cx, cy, s, color){
 }
 
 let fx = [];
+
+// A spin reads as two square rings snapping outward and rotating, plus eight
+// shards thrown off the piece, all in that piece's own colour. Squares (not
+// circles) so it belongs to the same shape language as everything else.
+function drawSpinFx(c, f, k){
+  const ease = 1 - Math.pow(1-k, 3), fade = 1 - k;
+  c.save();
+  c.translate(f.cx, f.cy);
+  c.rotate(ease * Math.PI/2);
+  c.strokeStyle = f.color; c.lineJoin = 'miter';
+  const r1 = f.r * (0.72 + ease*0.62);
+  // A dark pass under each ring first, so the colour still reads when the
+  // burst lands on top of a stack that is already every colour at once.
+  c.globalAlpha = fade * .5; c.strokeStyle = '#000'; c.lineWidth = 7;
+  c.strokeRect(-r1, -r1, r1*2, r1*2);
+  c.strokeStyle = f.color;
+  c.globalAlpha = fade; c.lineWidth = 4;
+  c.strokeRect(-r1, -r1, r1*2, r1*2);
+  const r2 = f.r * (0.72 + ease*1.05);
+  c.globalAlpha = fade * .5; c.lineWidth = 2;
+  c.strokeRect(-r2, -r2, r2*2, r2*2);
+  c.globalAlpha = fade * .95;
+  for (let i=0;i<8;i++){
+    const a = i*Math.PI/4 + ease*0.7, d = f.r*(0.55 + ease*1.25), sz = 9*fade;
+    c.fillStyle = '#000'; c.fillRect(Math.cos(a)*d - sz/2-1.5, Math.sin(a)*d - sz/2-1.5, sz+3, sz+3);
+    c.fillStyle = f.color; c.fillRect(Math.cos(a)*d - sz/2, Math.sin(a)*d - sz/2, sz, sz);
+  }
+  c.restore();
+  c.globalAlpha = 1;
+}
+// Turn the locked piece's cells into board-space geometry for the burst above.
+function spinGeometry(cells, color){
+  let x0=99, x1=-99, y0=99, y1=-99;
+  for (const [x,y] of cells){ x0=Math.min(x0,x); x1=Math.max(x1,x); y0=Math.min(y0,y); y1=Math.max(y1,y); }
+  return {
+    cx: ((x0+x1+1)/2)*CS,
+    cy: ((y0+y1+1)/2 - OFF)*CS,
+    r: Math.max(x1-x0+1, y1-y0+1)*CS/2,
+    top: ((y0+y1+1)/2 - OFF)*CS / BH * 100,     // as a % of the board wrapper, for the DOM label
+    color,
+  };
+}
+
 function drawBoard(){
   const c = bctx, top = 2*CS;
   c.clearRect(0,0,BW,BH);
@@ -596,24 +814,56 @@ function drawBoard(){
   c.stroke();
 
   const dead = game.state === 'over';
-  let danger = false;
+  let topRow = ROWS;                       // highest filled row; ROWS means the board is empty
   for (let y=OFF;y<ROWS;y++) for (let x=0;x<COLS;x++){
     const t = game.board[y][x];
-    if (t){ drawCell(c, x*CS, (y-OFF)*CS, CS, dead ? '#4a5270' : COLORS[t]); if (y < HIDDEN+3) danger = true; }
+    if (t){ drawCell(c, x*CS, (y-OFF)*CS, CS, dead ? '#4a5270' : COLORS[t]); if (y < topRow) topRow = y; }
   }
+  // 0 while there's room to breathe, ramping to 1 as the stack reaches the
+  // top of the visible board. Everything about the danger state -- how fast
+  // it beats, how loud the frame is, which HUD tier shows -- reads off this.
+  const headroom = topRow - HIDDEN;
+  const dangerAmt = dead ? 0 : Math.max(0, Math.min(1, (DANGER_ROWS - headroom) / DANGER_ROWS));
   if (game.cur && (game.state === 'playing' || game.state === 'paused')){
     const col = COLORS[game.cur.type], gy = game.ghostY();
     for (const [x,y] of cellsOf({...game.cur, y:gy})) if (y >= OFF) drawGhost(c, x*CS, (y-OFF)*CS, CS, col);
     for (const [x,y] of cellsOf(game.cur)) if (y >= OFF) drawCell(c, x*CS, (y-OFF)*CS, CS, col);
   }
   const now = performance.now();
-  fx = fx.filter(f => now - f.t < 240);
+  fx = fx.filter(f => now - f.t < f.ms);
   for (const f of fx){
-    c.fillStyle = `rgba(255,255,255,${(1-(now-f.t)/240)*.85})`;
-    for (const r of f.rows) c.fillRect(0, (r-OFF)*CS, BW, CS);
+    const k = (now - f.t) / f.ms;            // 0 at the start, 1 as it expires
+    if (f.kind === 'rows'){
+      c.fillStyle = `rgba(255,255,255,${(1-k)*.85})`;
+      for (const r of f.rows) c.fillRect(0, (r-OFF)*CS, BW, CS);
+    } else if (f.kind === 'garbage'){
+      const gy = (ROWS - f.lines - OFF) * CS;
+      c.fillStyle = `rgba(255,90,106,${(1-k)*.55})`;
+      c.fillRect(0, gy, BW, f.lines*CS);
+      c.fillStyle = `rgba(255,255,255,${(1-k)*.95})`;
+      c.fillRect(0, gy - 2, BW, 4);
+      c.fillStyle = `rgba(255,90,106,${(1-k)*.8})`;
+      c.fillRect(0, gy - 8, BW, 6);
+    } else if (f.kind === 'spin'){
+      drawSpinFx(c, f, k);
+    }
   }
-  c.strokeStyle = danger && !dead ? theme.danger : theme.frame; c.lineWidth = 2;
-  c.strokeRect(1, top+1, BW-2, VISIBLE*CS-2);
+
+  // The frame is the danger read-out: it beats faster and burns brighter the
+  // less headroom is left, and the DOM HUD layered over it escalates in step.
+  if (dangerAmt > 0){
+    const period = 620 - 320*dangerAmt;                       // ms per beat
+    const beat = (Math.sin(now / period * Math.PI * 2) + 1) / 2;
+    c.strokeStyle = theme.danger;
+    c.lineWidth = 2 + 2.5*beat*dangerAmt;
+    c.globalAlpha = .55 + .45*beat;
+    c.strokeRect(1, top+1, BW-2, VISIBLE*CS-2);
+    c.globalAlpha = 1;
+  } else {
+    c.strokeStyle = theme.frame; c.lineWidth = 2;
+    c.strokeRect(1, top+1, BW-2, VISIBLE*CS-2);
+  }
+  FX.danger(dangerAmt);
 }
 function drawSide(){
   hctx.clearRect(0,0,120,76);
@@ -641,9 +891,90 @@ const store = {
   get(k, d){ try { const v = localStorage.getItem('blockdrop:'+k); return v == null ? d : JSON.parse(v); } catch(e){ return d; } },
   set(k, v){ try { localStorage.setItem('blockdrop:'+k, JSON.stringify(v)); } catch(e){} },
 };
-const DEFAULTS = {das:133, arr:10, sdf:20, bgDark:60};
+const DEFAULTS = {das:133, arr:10, sdf:20, bgDark:60, shake:true};
 const settings = Object.assign({}, DEFAULTS, store.get('settings', {}));
 game.sdf = settings.sdf;
+
+// ---------------------------------------------------------------------
+// FX CONTROLLER — everything the player feels but doesn't play: the danger
+// HUD, an attack leaving the board, garbage landing on it, a spin paying
+// off. Each burst is a short-lived element that removes itself, so nothing
+// piles up over a long match; the only per-frame cost is danger(), which
+// bails immediately unless the danger tier actually changed.
+// ---------------------------------------------------------------------
+const FX = (() => {
+  const root = $('#fxRoot'), hud = $('#dangerHud');
+  const wrap = document.querySelector('.boardWrap');
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let lastTier = -1;
+
+  function add(parent, cls, ms, build){
+    if (!parent) return null;
+    const el = document.createElement('div');
+    el.className = cls;
+    if (build) build(el);
+    parent.appendChild(el);
+    setTimeout(() => el.remove(), ms);
+    return el;
+  }
+
+  function danger(amt){
+    const tier = amt <= 0 ? 0 : amt >= .72 ? 2 : 1;
+    if (tier === lastTier || !hud) return;
+    lastTier = tier;
+    hud.classList.toggle('on', tier > 0);
+    hud.classList.toggle('crit', tier === 2);
+    hud.style.setProperty('--beat', (tier === 2 ? .52 : .95) + 's');
+  }
+
+  function shake(mag){
+    if (reduced || settings.shake === false || !wrap) return;
+    wrap.style.setProperty('--sk', mag.toFixed(2));
+    wrap.classList.remove('shake'); void wrap.offsetWidth; wrap.classList.add('shake');
+  }
+
+  function send(lines){
+    if (!lines) return;
+    add(root, 'sendSweep', 500);
+    add(root, 'sendEdge', 500);
+    add(root, 'sendBurst', 820, el => {
+      const chev = Math.max(2, Math.min(6, Math.round(lines)));
+      let h = '';
+      for (let i=0;i<chev;i++) h += `<i style="animation-delay:${i*45}ms"></i>`;
+      el.innerHTML = h + `<b>+${lines}</b>`;
+    });
+  }
+
+  function receive(lines){
+    if (!lines) return;
+    add(root, 'recvFlash', 520);
+    add(root, 'recvBar', 520);
+    fx.push({kind:'garbage', ms:440, t: performance.now(), lines});
+    shake(Math.min(13, 3.5 + lines*1.7));
+    const warn = $('#garbageWarn');
+    if (warn){ warn.classList.remove('pulse'); void warn.offsetWidth; warn.classList.add('pulse'); }
+  }
+
+  function spin(type, label, cells){
+    const g = spinGeometry(cells, COLORS[type] || '#ffffff');
+    fx.push({kind:'spin', ms:620, t: performance.now(), ...g});
+    add(root, 'spinTag', 960, el => {
+      el.style.setProperty('--spin', g.color);
+      el.style.top = Math.max(14, Math.min(86, g.top)) + '%';
+      el.textContent = label;
+    });
+  }
+
+  function reset(){
+    lastTier = -1;
+    if (hud) hud.classList.remove('on', 'crit');
+    if (root) root.innerHTML = '';
+    if (wrap) wrap.classList.remove('shake');
+  }
+
+  return { danger, shake, send, receive, spin, reset };
+})();
+window.FX = FX;   // the multiplayer module fires the outgoing attack effect
 
 // --- background (custom uploads) ---
 // Players upload their own pictures; they're stored in this browser's
@@ -780,7 +1111,7 @@ function begin(m){
     setTimeout(() => { document.documentElement.style.overflow = ''; }, 700);
   }
   mode = m; clearTimeout(cdTimer);
-  game.prepare(m); fx = [];
+  game.prepare(m); fx = []; FX.reset();
   $('#action').className = 'action';
   $('#practiceNote').hidden = m !== 'practice';
   let n = 3; overlay(`<div class="count">${n}</div>`);
@@ -807,7 +1138,7 @@ ov.addEventListener('click', e => {
 });
 
 game.on('clear', e => {
-  if (e.rows.length) fx.push({t: performance.now(), rows: e.rows});
+  if (e.rows.length) fx.push({kind:'rows', ms:240, t: performance.now(), rows: e.rows});
   const parts = [];
   if (e.b2b) parts.push(`<div class="b2b${e.surge ? ' surge' : ''}">Back-to-back x${e.b2bCount - 1}${e.surge ? ' SURGE' : ''}</div>`);
   if (e.name && (e.lines >= 2 || e.tspin)) parts.push(`<div class="nm ${e.lines === 4 || e.tspin === 'full' ? 'big' : ''}">${e.name}</div>`);
@@ -816,6 +1147,13 @@ game.on('clear', e => {
   if (!parts.length) return;
   const el = $('#action'); el.innerHTML = parts.join(''); el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
 });
+// Solo, every line of attack you earn fires the send effect. In a versus
+// match it is fired from onLocalLock() instead, with the amount that
+// actually survived cancellation -- no point flashing "+4" at someone when
+// all four lines went into soaking up their own incoming queue.
+game.on('clear', e => { if (!window.__mpActive && e.attack > 0) FX.send(e.attack); });
+game.on('spin', e => FX.spin(e.type, e.tspin === 'mini' ? 'MINI T-SPIN' : e.type + '-SPIN', e.cells));
+game.on('garbage', e => FX.receive(e.lines));
 game.on('over', e => {
   if (window.__mpActive) return;   // the multiplayer module handles its own game-over screen
   releaseAll();
@@ -833,7 +1171,7 @@ game.on('over', e => {
     <div class="modes"><button class="btn primary" data-act="again">Play again</button><button class="btn" data-act="menu">Change mode</button></div>
     <div class="hint">Enter or R to play again</div>`), 350);
 });
-function doUndo(){ if (game.undo()){ overlay(null); fx = []; $('#action').className = 'action'; } }
+function doUndo(){ if (game.undo()){ overlay(null); fx = []; FX.reset(); $('#action').className = 'action'; } }
 
 game.on('won', e => {
   releaseAll();
@@ -916,7 +1254,9 @@ const fields = [
   ['sdf', v => v >= 41 ? 'Instant' : v + 'x'],
   ['bgDark', v => v + '%'],
 ];
-function syncSettingsUI(){ for (const [k,f] of fields){ $('#'+k).value = settings[k]; $('#'+k+'V').textContent = f(settings[k]); } renderBgSwatches(); }
+function syncSettingsUI(){ for (const [k,f] of fields){ $('#'+k).value = settings[k]; $('#'+k+'V').textContent = f(settings[k]); }
+  $('#shake').checked = settings.shake !== false; renderBgSwatches(); }
+$('#shake').addEventListener('change', e => { settings.shake = e.target.checked; store.set('settings', settings); });
 for (const [k,f] of fields){
   $('#'+k).addEventListener('input', e => { settings[k] = +e.target.value; $('#'+k+'V').textContent = f(settings[k]);
     game.sdf = settings.sdf; applyBgDarkness(); store.set('settings', settings); });
@@ -1109,7 +1449,11 @@ async function mpBoot(code){
       }
       if (remaining > 0 && latestRoom){
         const target = pickTarget(latestRoom, myUid);
-        if (target) sendGarbage(db, code, target, remaining);
+        if (target){
+          sendGarbage(db, code, target, remaining);
+          window.FX.send(remaining);
+          flashOpponent(target);         // and it lands visibly on whoever caught it
+        }
       }
     } else if (queuedGarbage.length){
       // No clear this placement, so whatever's queued actually lands —
@@ -1125,6 +1469,15 @@ async function mpBoot(code){
       }
     }
     updateGarbageWarning();
+  }
+
+  // The attack is aimed at one specific player, so show it arriving there
+  // rather than just leaving your own board.
+  function flashOpponent(uid){
+    const el = $('#opp-' + uid);
+    if (!el) return;
+    el.classList.remove('hit'); void el.offsetWidth; el.classList.add('hit');
+    setTimeout(() => el.classList.remove('hit'), 560);
   }
 
   function onLocalOver(){
