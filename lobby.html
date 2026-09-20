@@ -3,74 +3,364 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>BlockDrop — Lobby</title>
+<meta name="color-scheme" content="dark">
+<title>BlockDrop</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
-:root{ --bg:#000; --panel:#0d0d0d; --text:#ededed; --muted:#8a8a8a; --border:#262626; --accent:#ffc93c; --accent-ink:#111; --danger:#ff5a6a; --ok:#4fd46a; }
+:root{
+  --bg:#000; --panel:#0d0d0d; --text:#ededed; --muted:#8a8a8a; --border:#262626;
+  --accent:#ffc93c; --accent-ink:#111; --danger:#ff5a6a; --ok:#4fd46a;
+  --ease:cubic-bezier(.22,1,.36,1);
+  --beat:1.7s;                        /* the logo heartbeat; ripples fire every other beat */
+  --menuw:clamp(232px,32vw,330px);
+}
 *{box-sizing:border-box}
-body{margin:0;min-height:100vh;background:var(--bg);color:var(--text);font-family:'Chakra Petch',system-ui,sans-serif;
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--text);overflow-x:hidden;
+  font-family:'Chakra Petch',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
   display:flex;align-items:center;justify-content:center;padding:20px}
-.card{width:min(420px,100%);background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:24px}
-h1{margin:0 0 4px;font-size:1.5rem}
+[hidden]{display:none!important}
+
+/* ============================================================
+   Ambient layers: drifting tetrominoes on a canvas, an accent
+   glow over them, and a vignette to sink the edges. All fixed
+   and pointer-transparent, so every screen (landing, room,
+   starting) floats on the same backdrop.
+   ============================================================ */
+#bgfx{position:fixed;inset:0;width:100%;height:100%;z-index:0;pointer-events:none}
+.ambient{position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:
+    radial-gradient(58% 52% at 50% 44%, rgba(255,201,60,.10), transparent 68%),
+    radial-gradient(130% 95% at 50% 118%, rgba(0,0,0,.92), transparent 62%),
+    radial-gradient(100% 100% at 50% 50%, transparent 55%, rgba(0,0,0,.72) 100%)}
+#veil{position:fixed;inset:0;background:#000;opacity:0;pointer-events:none;z-index:60;
+  transition:opacity .26s ease}
+#veil.on{opacity:1;pointer-events:auto}
+
+/* ============================================================
+   Corner HUD
+   ============================================================ */
+.hud{position:fixed;z-index:4;font-size:.74rem;letter-spacing:.05em;color:#6c6c6c;
+  display:flex;align-items:center;gap:8px;user-select:none}
+.hud-tl{top:16px;left:18px}
+.hud-tr{top:12px;right:14px}
+.hud-br{right:18px;bottom:16px;font-variant-numeric:tabular-nums}
+.hud .mark{width:14px;height:14px;fill:var(--accent);opacity:.85}
+.hud .brand{color:#bdbdbd;font-weight:700;letter-spacing:.06em}
+.hud .ver{padding:1px 6px;border:1px solid var(--border);border-radius:5px;font-size:.66rem}
+.iconBtn{background:none;border:1px solid transparent;border-radius:8px;color:#6c6c6c;
+  padding:6px;cursor:pointer;display:grid;place-items:center;transition:color .15s,border-color .15s}
+.iconBtn:hover{color:var(--text);border-color:var(--border)}
+.iconBtn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.iconBtn svg{width:17px;height:17px;fill:currentColor}
+.iconBtn .muteSlash{display:none}
+.iconBtn.muted .muteWave{display:none}
+.iconBtn.muted .muteSlash{display:block}
+
+.tipbar{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:4;
+  display:flex;align-items:center;gap:8px;max-width:min(620px,88vw);
+  background:rgba(10,10,10,.72);border:1px solid var(--border);border-radius:999px;
+  padding:7px 16px;font-size:.78rem;color:var(--muted);white-space:nowrap;
+  overflow:hidden;backdrop-filter:blur(10px)}
+.tipbar .bulb{flex:none;width:13px;height:13px;fill:var(--accent);opacity:.9}
+.tipbar .tipText{min-width:0;overflow:hidden;text-overflow:ellipsis;transition:opacity .25s ease}
+.tipbar.fading .tipText{opacity:0}
+.tipbar b{color:#d8d8d8;font-weight:600}
+.tipbar kbd{font:inherit;font-size:.7rem;font-weight:600;background:#151515;border:1px solid var(--border);
+  border-bottom-width:2px;border-radius:4px;padding:0 5px;color:#d8d8d8}
+
+/* ============================================================
+   SCREEN 0: the welcome stage. One logo, and a menu that fans
+   out from behind it when you click it.
+   ============================================================ */
+.stage{position:fixed;inset:0;z-index:2;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:34px;padding:24px}
+.logoRow{position:relative;display:flex;align-items:center;justify-content:center}
+
+.logo{position:relative;z-index:2;flex:none;width:min(44vmin,286px);aspect-ratio:1;
+  padding:0;border:none;background:none;color:inherit;cursor:pointer;display:grid;place-items:center;
+  transition:transform .3s var(--ease)}
+.logo:hover{transform:scale(1.035)}
+.logo:active{transform:scale(.985)}
+.logo:focus-visible{outline:none}
+.logo:focus-visible .logoFace{box-shadow:0 0 0 3px rgba(255,201,60,.55),0 0 70px rgba(255,201,60,.25)}
+.logoPulse{position:absolute;inset:0;display:grid;place-items:center}
+.logoFace{position:absolute;inset:0;border-radius:26px;overflow:hidden;
+  background:radial-gradient(125% 120% at 50% -10%,#1c1c1c,#070707 72%);
+  border:3px solid var(--accent);
+  box-shadow:0 0 0 1px rgba(255,201,60,.18),0 0 64px rgba(255,201,60,.16),
+             inset 0 0 70px rgba(255,201,60,.05),0 30px 70px rgba(0,0,0,.7);
+  transition:box-shadow .3s ease}
+.logo:hover .logoFace{box-shadow:0 0 0 1px rgba(255,201,60,.3),0 0 90px rgba(255,201,60,.3),
+             inset 0 0 70px rgba(255,201,60,.08),0 30px 70px rgba(0,0,0,.7)}
+/* faint grid crawling upward inside the mark */
+.logoFace::before{content:"";position:absolute;inset:-60% -20%;
+  background-image:linear-gradient(rgba(255,201,60,.055) 1px,transparent 1px),
+                   linear-gradient(90deg,rgba(255,201,60,.055) 1px,transparent 1px);
+  background-size:26px 26px}
+.logoFace::after{content:"";position:absolute;inset:0;
+  background:linear-gradient(180deg,rgba(255,255,255,.05),transparent 42%)}
+.logoInner{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;
+  gap:clamp(8px,2.2vmin,14px)}
+.logoMark{width:clamp(48px,15vmin,86px);height:auto;overflow:visible}
+.logoMark .piece{fill:var(--accent)}
+.logoMark .drop{fill:var(--accent);opacity:0}
+.logoWord{font-weight:700;font-size:clamp(1.1rem,4.4vmin,1.85rem);letter-spacing:.015em;line-height:1;
+  text-shadow:0 2px 18px rgba(255,201,60,.25)}
+.ripple{position:absolute;inset:0;border-radius:30px;border:2px solid var(--accent);opacity:0;pointer-events:none}
+
+.tagline{position:relative;margin:0;height:1.2em;text-align:center;font-size:.86rem;
+  color:var(--muted);letter-spacing:.06em}
+.tagline span{position:absolute;left:50%;top:0;transform:translateX(-50%);white-space:nowrap;
+  transition:opacity .25s ease}
+.tagline .openLine{opacity:0}
+.stage.open .tagline .closedLine{opacity:0}
+.stage.open .tagline .openLine{opacity:.75}
+
+/* The menu sits in a zero-width box beside the logo: closed, its buttons are
+   parked to the left (behind the opaque logo, which outranks them on z) and
+   fully transparent; opening widens the box, which slides the logo left as the
+   row re-centres, and the buttons ride out one after another. */
+.menu{position:relative;z-index:1;display:flex;flex-direction:column;gap:12px;
+  width:0;margin-left:0;opacity:0;pointer-events:none;
+  transition:width .5s var(--ease),margin-left .5s var(--ease),opacity .3s ease}
+.stage.open .menu{width:var(--menuw);margin-left:30px;opacity:1;pointer-events:auto}
+
+.mbtn{position:relative;flex:none;width:var(--menuw);display:flex;align-items:center;gap:14px;
+  font:inherit;text-align:left;cursor:pointer;color:var(--text);
+  padding:15px 18px 15px 20px;border-radius:12px;border:1px solid var(--border);
+  background:rgba(19,19,19,.82);backdrop-filter:blur(12px);
+  box-shadow:0 12px 30px rgba(0,0,0,.45);
+  transform:translateX(-64px);opacity:0;transition-delay:0s;
+  transition:transform .45s var(--ease),opacity .3s ease,border-color .16s ease,background-color .16s ease}
+.stage.open .mbtn{transform:none;opacity:1;transition-delay:calc(var(--i)*70ms + 70ms)}
+.stage.open .mbtn:hover{transform:translateX(9px);border-color:#4a4a4a;background:rgba(30,30,30,.9);transition-delay:0s}
+.stage.open .mbtn:active{transform:translateX(9px) scale(.985);transition-delay:0s}
+.mbtn:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.mbtn::before{content:"";position:absolute;left:0;top:12px;bottom:12px;width:3px;border-radius:0 3px 3px 0;
+  background:var(--accent);opacity:.5;transition:top .18s var(--ease),bottom .18s var(--ease),width .18s,opacity .18s}
+.mbtn:hover::before{top:0;bottom:0;width:5px;opacity:1}
+.mbtn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);
+  box-shadow:0 12px 34px rgba(255,201,60,.22)}
+.stage.open .mbtn.primary:hover{background:#ffd75e;border-color:#ffd75e}
+.mbtn.primary::before{background:rgba(0,0,0,.35)}
+.micon{flex:none;width:26px;height:26px;fill:var(--accent);opacity:.95}
+.mbtn.primary .micon{fill:rgba(0,0,0,.72)}
+.mtext{display:flex;flex-direction:column;gap:2px;min-width:0}
+.mlabel{font-weight:700;font-size:1.02rem;line-height:1.15;letter-spacing:.01em}
+.msub{font-size:.75rem;color:var(--muted);line-height:1.15;letter-spacing:.02em}
+.mbtn.primary .msub{color:rgba(0,0,0,.55)}
+
+/* Narrow screens: the menu drops below the logo instead of beside it. */
+@media (max-width:760px),(max-height:560px){
+  :root{--menuw:min(330px,84vw)}
+  .stage{gap:24px}
+  .logoRow{flex-direction:column}
+  .menu{width:var(--menuw);max-height:0;margin-left:0;margin-top:0;
+    transition:max-height .45s var(--ease),margin-top .45s var(--ease),opacity .3s ease}
+  .stage.open .menu{width:var(--menuw);max-height:260px;margin-left:0;margin-top:26px}
+  .mbtn{transform:translateY(-40px)}
+  .stage.open .mbtn:hover,.stage.open .mbtn:active{transform:none}
+}
+
+/* ============================================================
+   SCREENS 1-3: name + create/join, the room, and "starting".
+   ============================================================ */
+.card{position:relative;z-index:2;width:min(430px,100%);
+  background:rgba(12,12,12,.84);backdrop-filter:blur(18px) saturate(1.15);
+  border:1px solid var(--border);border-radius:16px;padding:26px 24px 22px;
+  box-shadow:0 28px 64px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.04)}
+.card::before{content:"";position:absolute;left:26px;right:26px;top:0;height:2px;border-radius:2px;
+  background:linear-gradient(90deg,transparent,var(--accent),transparent);opacity:.65}
+h1{margin:0 0 4px;font-size:1.5rem;letter-spacing:.01em}
 p.sub{margin:0 0 20px;color:var(--muted);font-size:.9rem}
-label{display:block;font-size:.85rem;color:var(--muted);margin-bottom:6px}
-input{width:100%;font:inherit;font-size:1rem;background:#000;border:1px solid var(--border);border-radius:8px;
-  color:var(--text);padding:10px 12px;margin-bottom:14px}
-input:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent)}
-input.code{text-transform:uppercase;letter-spacing:.15em;font-weight:700;text-align:center}
-.btn{width:100%;font:inherit;font-weight:700;font-size:1rem;padding:12px;border-radius:8px;border:1px solid var(--border);
-  background:#171717;color:var(--text);cursor:pointer;margin-bottom:10px}
-.btn:hover{border-color:var(--muted)}
+label{display:block;font-size:.78rem;color:var(--muted);margin-bottom:6px;
+  text-transform:uppercase;letter-spacing:.09em}
+input{width:100%;font:inherit;font-size:1rem;background:rgba(0,0,0,.6);border:1px solid var(--border);
+  border-radius:9px;color:var(--text);padding:11px 13px;margin-bottom:14px;
+  transition:border-color .15s,box-shadow .15s,background-color .15s}
+input::placeholder{color:#4f4f4f}
+input:hover{border-color:#3a3a3a}
+input:focus{outline:none;border-color:var(--accent);background:rgba(0,0,0,.8);
+  box-shadow:0 0 0 3px rgba(255,201,60,.16)}
+input.code{text-transform:uppercase;letter-spacing:.35em;font-weight:700;text-align:center;
+  font-size:1.25rem;padding-left:.35em}
+.btn{position:relative;width:100%;font:inherit;font-weight:700;font-size:1rem;padding:12px;
+  border-radius:9px;border:1px solid var(--border);background:#171717;color:var(--text);
+  cursor:pointer;margin-bottom:10px}
+.btn:hover{border-color:#4a4a4a;background:#1e1e1e}
+.btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .btn:disabled{opacity:.4;cursor:not-allowed}
-.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);
+  box-shadow:0 10px 28px rgba(255,201,60,.18)}
+.btn.primary:hover:not(:disabled){background:#ffd75e;border-color:#ffd75e}
 .row2{display:flex;gap:10px}
 .row2 .btn{margin-bottom:0}
-.divider{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:.8rem;margin:16px 0}
-.divider::before,.divider::after{content:'';flex:1;height:1px;background:var(--border)}
-.roomcode{font-size:2rem;font-weight:700;letter-spacing:.12em;text-align:center;color:var(--accent);margin-bottom:4px}
+.divider{display:flex;align-items:center;gap:10px;color:#5a5a5a;font-size:.72rem;margin:16px 0;
+  text-transform:uppercase;letter-spacing:.14em}
+.divider::before,.divider::after{content:"";flex:1;height:1px;background:var(--border)}
+
+.roomcode{font-size:2.6rem;font-weight:700;letter-spacing:.24em;text-align:center;color:var(--accent);
+  margin:6px 0 4px;padding-left:.24em;text-shadow:0 2px 26px rgba(255,201,60,.3)}
 .hint{text-align:center;color:var(--muted);font-size:.82rem;margin-bottom:18px}
 .players{list-style:none;margin:0 0 18px;padding:0;display:flex;flex-direction:column;gap:8px}
-.players li{display:flex;align-items:center;justify-content:space-between;background:#000;border:1px solid var(--border);
-  border-radius:8px;padding:10px 12px;font-size:.95rem}
-.dot{width:8px;height:8px;border-radius:50%;background:var(--muted);display:inline-block;margin-right:8px}
-.dot.on{background:var(--ok)}
-.tag{font-size:.78rem;padding:2px 8px;border-radius:20px;border:1px solid var(--border);color:var(--muted)}
-.tag.ready{color:var(--ok);border-color:var(--ok)}
-.msg{font-size:.85rem;text-align:center;min-height:20px;margin-bottom:8px}
+.players li{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  background:rgba(0,0,0,.55);border:1px solid var(--border);border-radius:9px;
+  padding:11px 13px;font-size:.95rem}
+.dot{width:8px;height:8px;border-radius:50%;background:#4a4a4a;display:inline-block;margin-right:9px;
+  vertical-align:middle}
+.dot.on{background:var(--ok);box-shadow:0 0 0 3px rgba(79,212,106,.16)}
+.tag{flex:none;font-size:.7rem;font-weight:600;padding:3px 10px;border-radius:20px;
+  border:1px solid var(--border);color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.tag.ready{color:var(--ok);border-color:rgba(79,212,106,.45);background:rgba(79,212,106,.1)}
+.msg{font-size:.85rem;text-align:center;min-height:20px;margin:8px 0 0}
 .msg.err{color:var(--danger)}
 .msg.ok{color:var(--ok)}
-.back{color:var(--muted);background:none;border:none;font:inherit;font-size:.85rem;cursor:pointer;padding:0;margin-bottom:16px}
+.back{display:inline-flex;align-items:center;gap:6px;color:var(--muted);background:none;border:none;
+  font:inherit;font-size:.82rem;cursor:pointer;padding:0;margin-bottom:16px;letter-spacing:.04em}
 .back:hover{color:var(--text)}
-[hidden]{display:none}
+.back:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:4px}
 
-/* Motion: cards slide up from the bottom when a screen appears (display:none
-   -> shown restarts the animation, so this also covers switching screens). */
-.btn,input{transition:border-color .15s,background-color .15s,outline-color .15s}
+/* "Match starting": three blocks bouncing in sequence. */
+.loader{display:flex;justify-content:center;gap:7px;margin-top:6px}
+.loader i{width:12px;height:12px;border-radius:3px;background:var(--accent);opacity:.85}
+
+/* ============================================================
+   Motion. Everything rises from below (the house style the game
+   itself uses) and the logo keeps a slow pulse, so the welcome
+   screen is never completely still.
+   ============================================================ */
 @media (prefers-reduced-motion: no-preference){
   @keyframes slideUp{from{transform:translateY(40px)}to{transform:none}}
-  .card{animation:slideUp .35s cubic-bezier(.22,1,.36,1) backwards}
-  .btn{transition:border-color .15s,background-color .15s,transform .1s}
-  .btn:not(:disabled):active{transform:scale(.98)}
+  @keyframes logoIn{from{transform:scale(.9);opacity:0}to{transform:none;opacity:1}}
+  @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+  @keyframes beat{0%{transform:scale(1.035)}42%{transform:scale(1)}100%{transform:scale(1)}}
+  @keyframes ripple{0%{transform:scale(1);opacity:.45}100%{transform:scale(1.28);opacity:0}}
+  @keyframes drift{from{transform:translateY(26px)}to{transform:none}}
+  @keyframes dropIn{0%{transform:translateY(-10px);opacity:0}
+    22%{opacity:.9}40%{transform:translateY(0);opacity:.9}70%{opacity:.9}100%{opacity:0}}
+  @keyframes bounce{0%,80%,100%{transform:translateY(0);opacity:.35}40%{transform:translateY(-9px);opacity:1}}
+  @keyframes breathe{0%,100%{opacity:.85}50%{opacity:1}}
+
+  .ambient{animation:breathe 9s ease-in-out infinite}
+  .card{animation:slideUp .35s var(--ease) backwards}
+  .logo{animation:logoIn .55s var(--ease) backwards}
+  .logoPulse{animation:beat var(--beat) var(--ease) infinite}
+  .logoFace::before{animation:drift 7s linear infinite}
+  .logoMark .drop{animation:dropIn calc(var(--beat)*2) var(--ease) infinite}
+  .ripple{animation:ripple calc(var(--beat)*2) var(--ease) infinite}
+  .ripple.r2{animation-delay:var(--beat)}
+  .tagline{animation:fadeIn .5s ease .35s backwards}
+  .loader i{animation:bounce 1.1s ease-in-out infinite}
+  .loader i:nth-child(2){animation-delay:.14s}
+  .loader i:nth-child(3){animation-delay:.28s}
+  .btn:not(:disabled):active{transform:scale(.985)}
 }
+@media (max-height:620px),(max-width:560px){
+  .tipbar{display:none}
+}
+@media (prefers-reduced-motion: reduce){
+  .logoMark .drop{opacity:.35}
+  /* The menu still opens and closes, it just stops travelling to do it. */
+  .menu,.mbtn,.card,.btn,input,.logo,.logoFace{transition-duration:.01ms!important}
+  .mbtn{transform:none!important}
+}
+.burst{position:absolute;inset:0;border-radius:30px;border:2px solid var(--accent);opacity:0;pointer-events:none}
+@media (prefers-reduced-motion: no-preference){ .burst{animation:ripple .62s var(--ease) forwards} }
 </style>
 </head>
 <body>
 
-<!-- ============ SCREEN 0: singleplayer or multiplayer ============ -->
-<div class="card" id="screenLanding">
-  <h1>BlockDrop</h1>
-  <p class="sub">Play solo, or with friends.</p>
-  <button class="btn primary" id="soloBtn">Singleplayer</button>
-  <button class="btn" id="mpBtn">Multiplayer</button>
+<canvas id="bgfx" aria-hidden="true"></canvas>
+<div class="ambient" aria-hidden="true"></div>
+<div id="veil" aria-hidden="true"></div>
+
+<div class="hud hud-tl">
+  <svg class="mark" viewBox="0 0 24 24" aria-hidden="true">
+    <rect x="9" y="1.5" width="6" height="6" rx="1.4"/><rect x="2.4" y="9" width="6" height="6" rx="1.4"/>
+    <rect x="9" y="9" width="6" height="6" rx="1.4"/><rect x="15.6" y="9" width="6" height="6" rx="1.4"/>
+    <rect x="2.4" y="16.5" width="19.2" height="6" rx="1.4" opacity=".4"/>
+  </svg>
+  <span class="brand">BLOCKDROP</span><span class="ver">web</span>
 </div>
+
+<button class="hud hud-tr iconBtn" id="soundBtn" aria-pressed="true" aria-label="Interface sounds" title="Interface sounds">
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M4 9v6h4l5 4V5L8 9H4z"/>
+    <path class="muteWave" d="M16 8.2a5 5 0 0 1 0 7.6v-2a3 3 0 0 0 0-3.6v-2zm2-3a9 9 0 0 1 0 13.6v-2.1a7 7 0 0 0 0-9.4V5.2z"/>
+    <rect class="muteSlash" x="2.5" y="10.8" width="19" height="2.3" rx="1.15" transform="rotate(-45 12 12)"/>
+  </svg>
+</button>
+
+<div class="hud hud-br" id="perf">-- fps</div>
+
+<div class="tipbar" id="tipBar">
+  <svg class="bulb" viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M12 2a7 7 0 0 0-4 12.7V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.3A7 7 0 0 0 12 2zM9 19.5h6a1 1 0 0 1 0 2H9a1 1 0 0 1 0-2z"/>
+  </svg>
+  <span class="tipText" id="tipText"></span>
+</div>
+
+<!-- ============ SCREEN 0: singleplayer or multiplayer ============ -->
+<section class="stage" id="screenLanding">
+  <div class="logoRow" id="logoRow">
+    <button class="logo" id="logoBtn" aria-expanded="false" aria-controls="menu" aria-label="Open the menu">
+      <span class="ripple" aria-hidden="true"></span>
+      <span class="ripple r2" aria-hidden="true"></span>
+      <span class="logoPulse" aria-hidden="true">
+        <span class="logoFace"></span>
+      </span>
+      <span class="logoInner">
+        <svg class="logoMark" viewBox="0 0 24 17" aria-hidden="true">
+          <rect class="drop" x="2.4" y="2" width="6" height="6" rx="1.4"/>
+          <rect class="piece" x="9" y="2" width="6" height="6" rx="1.4"/>
+          <rect class="piece" x="2.4" y="9" width="6" height="6" rx="1.4"/>
+          <rect class="piece" x="9" y="9" width="6" height="6" rx="1.4"/>
+          <rect class="piece" x="15.6" y="9" width="6" height="6" rx="1.4"/>
+        </svg>
+        <span class="logoWord">BlockDrop</span>
+      </span>
+    </button>
+
+    <div class="menu" id="menu">
+      <button class="mbtn primary" id="soloBtn" style="--i:0">
+        <svg class="micon" viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="9" y="5.7" width="6" height="6" rx="1.4"/><rect x="2.4" y="12.3" width="6" height="6" rx="1.4"/>
+          <rect x="9" y="12.3" width="6" height="6" rx="1.4"/><rect x="15.6" y="12.3" width="6" height="6" rx="1.4"/>
+        </svg>
+        <span class="mtext">
+          <span class="mlabel">Singleplayer</span>
+          <span class="msub">Marathon, 40 lines, practice</span>
+        </span>
+      </button>
+      <button class="mbtn" id="mpBtn" style="--i:1">
+        <svg class="micon" viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="1" y="5" width="4.5" height="4.5" rx="1.1"/><rect x="1" y="10.5" width="4.5" height="4.5" rx="1.1"/>
+          <rect x="6" y="10.5" width="4.5" height="4.5" rx="1.1"/>
+          <rect x="18.5" y="5" width="4.5" height="4.5" rx="1.1"/><rect x="18.5" y="10.5" width="4.5" height="4.5" rx="1.1"/>
+          <rect x="13.5" y="10.5" width="4.5" height="4.5" rx="1.1"/>
+        </svg>
+        <span class="mtext">
+          <span class="mlabel">Multiplayer</span>
+          <span class="msub">Up to 3 players, one room code</span>
+        </span>
+      </button>
+    </div>
+  </div>
+
+  <p class="tagline">
+    <span class="closedLine">Play solo, or with friends &mdash; click the logo</span>
+    <span class="openLine">Esc to go back</span>
+  </p>
+</section>
 
 <!-- ============ SCREEN 1: name + create/join ============ -->
 <div class="card" id="screenHome" hidden>
   <button class="back" id="backToLandingBtn">&larr; Back</button>
-  <h1>BlockDrop</h1>
-  <p class="sub">Play Tetris together, just with friends.</p>
+  <h1>Multiplayer</h1>
+  <p class="sub">Play BlockDrop together, just with friends.</p>
   <label for="name">Your name</label>
   <input id="name" maxlength="16" placeholder="e.g. Alex" autocomplete="off">
 
@@ -86,7 +376,7 @@ input.code{text-transform:uppercase;letter-spacing:.15em;font-weight:700;text-al
 <div class="card" id="screenRoom" hidden>
   <button class="back" id="leaveBtn">&larr; Leave room</button>
   <div class="roomcode" id="roomCodeDisplay">----</div>
-  <p class="hint">Share this code — friends enter it on the home screen</p>
+  <p class="hint">Share this code &mdash; friends enter it on the home screen</p>
   <ul class="players" id="playerList"></ul>
   <button class="btn primary" id="readyBtn">Ready up</button>
   <p class="msg" id="roomMsg"></p>
@@ -95,8 +385,283 @@ input.code{text-transform:uppercase;letter-spacing:.15em;font-weight:700;text-al
 <!-- ============ SCREEN 3: starting ============ -->
 <div class="card" id="screenStarting" hidden style="text-align:center">
   <h1>Match starting</h1>
-  <p class="sub" id="startingSub">Setting up the board…</p>
+  <p class="sub" id="startingSub">Setting up the board&hellip;</p>
+  <div class="loader" aria-hidden="true"><i></i><i></i><i></i></div>
 </div>
+
+<!-- ============================================================
+     Welcome-screen chrome: the drifting background, the logo menu,
+     the interface sounds and the corner readouts. Plain (non-module)
+     and inline, so it is parsed and running before the deferred
+     module below ever calls bdLeave().
+     ============================================================ -->
+<script>
+(function(){
+  'use strict';
+  var reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var $ = function(s){ return document.querySelector(s); };
+
+  /* ---------- leaving the page: dip to black, then navigate ---------- */
+  var veil = $('#veil');
+  window.bdLeave = function(href){
+    if (reduced){ location.href = href; return; }
+    veil.classList.add('on');
+    setTimeout(function(){ location.href = href; }, 260);
+  };
+
+  /* ---------- interface sounds ----------
+     Synthesised on the spot, so the page still ships as three files with
+     no audio assets. Nothing is built until the first real gesture:
+     browsers refuse to start an AudioContext before one anyway. */
+  var Snd = (function(){
+    var ctx = null, armed = false, on = true;
+    try { on = localStorage.getItem('blockdrop:sound') !== 'off'; } catch(e){}
+    function ac(){
+      if (!armed || !on) return null;
+      if (!ctx){
+        var AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return null;
+        try { ctx = new AC(); } catch(e){ return null; }
+      }
+      if (ctx.state === 'suspended') ctx.resume();
+      return ctx;
+    }
+    function tone(f1, f2, dur, type, peak, delay){
+      var c = ac(); if (!c) return;
+      var t0 = c.currentTime + (delay || 0);
+      var o = c.createOscillator(), g = c.createGain();
+      o.type = type || 'triangle';
+      o.frequency.setValueAtTime(f1, t0);
+      if (f2) o.frequency.exponentialRampToValueAtTime(f2, t0 + dur);
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(peak, t0 + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      o.connect(g); g.connect(c.destination);
+      o.start(t0); o.stop(t0 + dur + 0.03);
+    }
+    return {
+      arm:    function(){ armed = true; },
+      isOn:   function(){ return on; },
+      set:    function(v){ on = v; try { localStorage.setItem('blockdrop:sound', v ? 'on' : 'off'); } catch(e){} },
+      hover:  function(){ tone(1180, null, 0.05, 'triangle', 0.02); },
+      select: function(){ tone(520, 1040, 0.12, 'triangle', 0.06); tone(1560, null, 0.06, 'sine', 0.02, 0.012); },
+      open:   function(){ tone(360, 900, 0.18, 'triangle', 0.05); },
+      close:  function(){ tone(760, 320, 0.16, 'triangle', 0.04); }
+    };
+  })();
+  document.addEventListener('pointerdown', Snd.arm, { once: true });
+  document.addEventListener('keydown', Snd.arm, { once: true });
+
+  var soundBtn = $('#soundBtn');
+  function paintSound(){
+    soundBtn.classList.toggle('muted', !Snd.isOn());
+    soundBtn.setAttribute('aria-pressed', Snd.isOn() ? 'true' : 'false');
+  }
+  paintSound();
+  soundBtn.addEventListener('click', function(){
+    Snd.set(!Snd.isOn());
+    paintSound();
+    if (Snd.isOn()) Snd.select();
+  });
+
+  /* ---------- the logo menu ---------- */
+  var stage = $('#screenLanding'), logoBtn = $('#logoBtn'), menu = $('#menu'), logoRow = $('#logoRow');
+  var buttons = [].slice.call(menu.querySelectorAll('.mbtn'));
+  menu.setAttribute('inert', '');
+
+  function isOpen(){ return stage.classList.contains('open'); }
+  function setMenu(open){
+    if (isOpen() === open) return;
+    stage.classList.toggle('open', open);
+    logoBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    logoBtn.setAttribute('aria-label', open ? 'Close the menu' : 'Open the menu');
+    if (open){
+      menu.removeAttribute('inert');
+      Snd.open();
+      // :focus-visible keeps the ring off for pointer users, so this only
+      // shows up for people who are actually on the keyboard.
+      buttons[0].focus({ preventScroll: true });
+    } else {
+      menu.setAttribute('inert', '');
+      Snd.close();
+      logoBtn.focus({ preventScroll: true });
+    }
+  }
+  function burst(){
+    if (reduced) return;
+    var r = document.createElement('span');
+    r.className = 'burst';
+    logoBtn.appendChild(r);
+    setTimeout(function(){ r.remove(); }, 800);
+  }
+  logoBtn.addEventListener('click', function(){ burst(); setMenu(!isOpen()); });
+  // Clicking the empty space around the logo counts too: closed it opens the
+  // menu, open it backs out -- the same forgiving target osu!'s menu gives you.
+  stage.addEventListener('click', function(e){
+    if (e.target === stage || e.target.closest('.tagline')) setMenu(!isOpen());
+  });
+  document.addEventListener('keydown', function(e){
+    if (stage.hidden) return;
+    if (e.key === 'Escape' && isOpen()){ e.preventDefault(); setMenu(false); return; }
+    if (!isOpen() && (e.key === 'Enter' || e.key === ' ') && document.activeElement === document.body){
+      e.preventDefault(); burst(); setMenu(true); return;
+    }
+    if (isOpen() && (e.key === 'ArrowDown' || e.key === 'ArrowUp')){
+      var i = buttons.indexOf(document.activeElement);
+      if (i < 0) return;
+      e.preventDefault();
+      buttons[(i + (e.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length].focus();
+    }
+  });
+
+  /* ---------- hover / click feedback on everything clickable ---------- */
+  [].forEach.call(document.querySelectorAll('.mbtn,.btn,.back,.logo,.iconBtn'), function(el){
+    el.addEventListener('pointerenter', function(){ if (!el.disabled) Snd.hover(); });
+    el.addEventListener('pointerdown', function(){ if (!el.disabled && el !== soundBtn) Snd.select(); });
+  });
+
+  /* ---------- rotating tips ---------- */
+  var TIPS = [
+    '<b>Space</b> hard-drops a piece instantly &mdash; <b>Down</b> only speeds its fall.',
+    'Stash a piece for later with <b>C</b> or <b>Shift</b>, then pull it back out when it fits.',
+    '<b>A</b> spins a piece a full 180&deg; in one keypress.',
+    'Practice mode is Marathon with a safety net: <b>Ctrl</b>+<b>Z</b> takes back your last piece.',
+    'Tetrises and T-spins back to back keep a bonus alive &mdash; five in a row and it surges.',
+    'In a versus match, clearing lines buries your opponents in garbage.',
+    'A room holds up to three players. Share the four-letter code and everyone lands in the same match.',
+    'Sliding feels wrong? Tune DAS and ARR under Settings &rarr; Handling.',
+    '40 lines is the sprint: clear forty as fast as you can and beat your own best.',
+    'Marathon keeps speeding up. The only way out is to stack clean.',
+    '<b>Esc</b> pauses, <b>R</b> starts the run over.'
+  ];
+  var tipBar = $('#tipBar'), tipText = $('#tipText'), tipIdx = Math.floor(Math.random() * TIPS.length);
+  function paintTip(){ tipText.innerHTML = TIPS[tipIdx % TIPS.length]; }
+  paintTip();
+  setInterval(function(){
+    tipIdx++;
+    if (reduced){ paintTip(); return; }
+    tipBar.classList.add('fading');
+    setTimeout(function(){ paintTip(); tipBar.classList.remove('fading'); }, 260);
+  }, 9000);
+
+  /* ---------- the drifting tetrominoes behind everything ----------
+     Canvas rather than DOM nodes: a couple of dozen rotating pieces at
+     60fps is exactly what a canvas is for, and it matches how the game
+     itself draws its board. */
+  var cv = $('#bgfx'), ctx = cv.getContext('2d');
+  var COLORS = ['#35d0f0','#ffc93c','#b25ce8','#4fd46a','#ff5468','#4a78ff','#ff9a3c'];
+  var SHAPES = [
+    { w:4, h:1, c:[[0,0],[1,0],[2,0],[3,0]] },          /* I */
+    { w:2, h:2, c:[[0,0],[1,0],[0,1],[1,1]] },          /* O */
+    { w:3, h:2, c:[[0,0],[1,0],[2,0],[1,1]] },          /* T */
+    { w:3, h:2, c:[[1,0],[2,0],[0,1],[1,1]] },          /* S */
+    { w:3, h:2, c:[[0,0],[1,0],[1,1],[2,1]] },          /* Z */
+    { w:3, h:2, c:[[0,0],[0,1],[1,1],[2,1]] },          /* J */
+    { w:3, h:2, c:[[2,0],[0,1],[1,1],[2,1]] }           /* L */
+  ];
+  var W = 0, H = 0, dpr = 1, pieces = [];
+
+  function rand(a, b){ return a + Math.random() * (b - a); }
+
+  function spawn(p, below){
+    var depth = rand(0.35, 1);                 /* 0 = far away, 1 = close */
+    p.shape = SHAPES[(Math.random() * SHAPES.length) | 0];
+    p.color = COLORS[(Math.random() * COLORS.length) | 0];
+    p.depth = depth;
+    p.cell  = rand(11, 26) * depth + 6;
+    p.rot   = rand(0, Math.PI * 2);
+    p.spin  = rand(-0.22, 0.22) * depth;
+    p.vy    = -(rand(7, 17) * depth + 3);
+    p.alpha = 0.05 + depth * 0.13;
+    p.x     = rand(-40, W + 40);
+    p.y     = below ? H + rand(40, H * 0.6) : rand(-40, H + 40);
+  }
+
+  function resize(){
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = innerWidth; H = innerHeight;
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    var want = Math.max(9, Math.min(26, Math.round(W * H / 48000)));
+    while (pieces.length > want) pieces.pop();
+    while (pieces.length < want){ var p = {}; spawn(p, false); pieces.push(p); }
+  }
+  addEventListener('resize', resize);
+  resize();
+
+  var hasRound = typeof ctx.roundRect === 'function';
+  function cell(x, y, s){
+    var g = s * 0.13, d = s - g * 2;
+    if (hasRound){ ctx.beginPath(); ctx.roundRect(x + g, y + g, d, d, s * 0.16); }
+    else { ctx.beginPath(); ctx.rect(x + g, y + g, d, d); }
+    ctx.fill(); ctx.stroke();
+  }
+  function drawPiece(p, offX){
+    var s = p.cell, sh = p.shape;
+    ctx.save();
+    ctx.translate(p.x + offX * p.depth, p.y);
+    ctx.rotate(p.rot);
+    ctx.translate(-sh.w * s / 2, -sh.h * s / 2);
+    ctx.fillStyle = p.color; ctx.strokeStyle = p.color;
+    ctx.globalAlpha = p.alpha; ctx.lineWidth = Math.max(1, s * 0.055);
+    for (var i = 0; i < sh.c.length; i++) cell(sh.c[i][0] * s, sh.c[i][1] * s, s);
+    ctx.restore();
+  }
+
+  /* ---------- parallax: the scene leans away from the cursor ---------- */
+  var tx = 0, ty = 0, px = 0, py = 0;
+  if (!reduced){
+    addEventListener('pointermove', function(e){
+      tx = (e.clientX / innerWidth - 0.5) * 2;
+      ty = (e.clientY / innerHeight - 0.5) * 2;
+    }, { passive: true });
+  }
+
+  var perf = $('#perf'), acc = 0, frames = 0, last = 0, running = true;
+  function frame(now){
+    if (!running) return;
+    var dt = last ? Math.min((now - last) / 1000, 0.05) : 0.016;
+    last = now;
+
+    px += (tx - px) * 0.055; py += (ty - py) * 0.055;
+    logoRow.style.transform = 'translate(' + (-px * 9).toFixed(2) + 'px,' + (-py * 7).toFixed(2) + 'px)';
+
+    ctx.clearRect(0, 0, W, H);
+    for (var i = 0; i < pieces.length; i++){
+      var p = pieces[i];
+      p.y += p.vy * dt;
+      p.rot += p.spin * dt;
+      if (p.y < -p.cell * 4) spawn(p, true);
+      drawPiece(p, -px * 26);
+    }
+    ctx.globalAlpha = 1;
+
+    acc += now - (frame.prev || now); frame.prev = now; frames++;
+    if (acc >= 500){
+      var ms = acc / frames;
+      perf.textContent = ms.toFixed(1) + 'ms  ' + Math.round(1000 / ms) + 'fps';
+      acc = 0; frames = 0;
+    }
+    requestAnimationFrame(frame);
+  }
+
+  if (reduced){
+    // One still frame, and no frame-time readout to report.
+    ctx.clearRect(0, 0, W, H);
+    for (var k = 0; k < pieces.length; k++) drawPiece(pieces[k], 0);
+    perf.hidden = true;
+  } else {
+    requestAnimationFrame(frame);
+    document.addEventListener('visibilitychange', function(){
+      if (document.hidden){ running = false; }
+      else if (!running){ running = true; last = 0; frame.prev = 0; acc = 0; frames = 0; requestAnimationFrame(frame); }
+    });
+  }
+
+  // Enter works straight away for keyboard users without stealing the ring.
+  logoBtn.focus({ preventScroll: true });
+})();
+</script>
 
 <script type="module">
 import { firebaseConfig } from './firebase-config.js';
@@ -104,6 +669,7 @@ import { initFirebase, signIn, createRoom, joinRoom, watchRoom, setReady, leaveR
 
 const $ = s => document.querySelector(s);
 const show = id => { for (const s of ['screenLanding','screenHome','screenRoom','screenStarting']) $('#'+s).hidden = (s !== id); };
+const leave = href => (window.bdLeave || (h => location.href = h))(href);
 
 // Coming back here as ?room=CODE means a match just ended and we're
 // rejoining the same room's ready-up screen — decide that BEFORE boot()'s
@@ -116,7 +682,7 @@ if (rejoinCode){
   show('screenStarting');
 }
 
-$('#soloBtn').addEventListener('click', () => location.href = 'blockdrop.html');
+$('#soloBtn').addEventListener('click', () => leave('blockdrop.html'));
 $('#mpBtn').addEventListener('click', () => show('screenHome'));
 $('#backToLandingBtn').addEventListener('click', () => show('screenLanding'));
 
@@ -202,7 +768,7 @@ async function goToMatch(){
   // This navigation closes our connection just like actually leaving would
   // — see cancelDisconnectHandlers()'s comment in lobby.js.
   await cancelDisconnectHandlers(db, code, uid).catch(() => {});
-  location.href = `blockdrop.html?room=${encodeURIComponent(code)}`;
+  leave(`blockdrop.html?room=${encodeURIComponent(code)}`);
 }
 
 function renderRoom(room, myName){
