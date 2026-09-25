@@ -1294,8 +1294,8 @@ requestAnimationFrame(frame);
    ===================================================================== */
 import { firebaseConfig } from './firebase-config.js';
 import {
-  initFirebase, signIn, watchRoom, markConnected, updateBoard,
-  sendGarbage, consumeGarbage, reportEliminated, pickTarget, leaveRoom, resetForRematch,
+  initFirebase, signIn, watchRoom, markConnected, updateBoard, watchServerClock,
+  sendAttack, claimAttacks, reportEliminated, pickTarget, leaveRoom, resetForRematch,
   cancelDisconnectHandlers
 } from './lobby.js';
 
@@ -1315,6 +1315,7 @@ document.addEventListener('click', e => { if (e.target.closest('[data-act="mp-lo
 async function mpBoot(code){
   overlay(`<div class="title">BlockDrop<small>Connecting…</small></div>`);
   const { db, auth } = initFirebase(firebaseConfig);
+  const clock = watchServerClock(db);
   const user = await signIn(auth);
   const myUid = user.uid;
   markConnected(db, code, myUid);
@@ -1332,7 +1333,7 @@ async function mpBoot(code){
   });
 
   let latestRoom = null, myEliminated = false, opponentsBuilt = false, matchStarted = false, lastSentJson = null;
-  let matchConcluded = false;
+  let matchConcluded = false, matchId = null, lastLiveRoom = null, claiming = false, broadcastTimer = null;
   // Incoming garbage you haven't been hit by yet, as separate chunks (each
   // keeping the random column gap it was assigned when it arrived) rather
   // than one merged number — matches tetr.io: stacking multiple attacks
@@ -1347,27 +1348,32 @@ async function mpBoot(code){
         overlay(`<div class="title">Room closed</div><div class="modes"><button class="btn primary" data-act="mp-lobby">Back to lobby</button></div>`);
         return;
       }
-      if (!matchStarted && (room.status === 'starting' || room.status === 'playing')){
+      const live = room.status === 'starting' || room.status === 'playing';
+      if (live) lastLiveRoom = room;
+      if (!matchStarted && live){
         matchStarted = true;
-        startCountdown(room.seed);
+        matchId = room.matchId || null;
+        startCountdown(room);
       }
       if (!opponentsBuilt && room.players){ buildOpponentPanels(room, myUid); opponentsBuilt = true; }
       if (room.players) renderOpponents(room, myUid);
 
-      const mine = room.players && room.players[myUid];
-      if (mine && mine.pendingGarbage > 0 && window.game.state === 'playing'){
-        // Claim it right away (safe — it's an atomic claim-and-zero, see
-        // consumeGarbage) but don't slam it onto the board mid-fall of the
-        // current piece. Queue it as its own chunk with its own gap column,
-        // and let the 'lock' handler below decide whether it lands, gets
-        // canceled, or both — matching tetr.io, garbage never applies
-        // mid-drop, only between pieces.
-        consumeGarbage(db, code, myUid).then(n => {
-          if (n > 0){
-            queuedGarbage.push({ amount: n, hole: Math.floor(Math.random() * MCOLS) });
-            updateGarbageWarning();
-          }
-        });
+      // Only this match's inbox is ever read — attacks from an earlier
+      // round are filed under that round's matchId, so they can't leak in.
+      const inbox = matchId && room.attacks && room.attacks[matchId] && room.attacks[matchId][myUid];
+      if (inbox && window.game.state === 'playing' && !claiming && !matchConcluded){
+        // Claim it right away (safe — it's an atomic claim-and-delete, see
+        // claimAttacks) but don't slam it onto the board mid-fall of the
+        // current piece. Queue each chunk with its own gap column, and let
+        // the 'lock' handler below decide whether it lands, gets canceled,
+        // or both — matching tetr.io, garbage never applies mid-drop, only
+        // between pieces.
+        claiming = true;
+        claimAttacks(db, code, matchId, myUid).then(list => {
+          for (const a of list) queuedGarbage.push({ amount: a.lines, hole: Math.floor(Math.random() * MCOLS), from: a.from });
+          if (list.length) updateGarbageWarning();
+        }).catch(err => console.error('[BlockDrop] claimAttacks failed:', err))
+          .finally(() => { claiming = false; });
       }
 
       checkForMatchEnd(room, myUid);
@@ -1385,17 +1391,28 @@ async function mpBoot(code){
   // referee: whoever notices first stops their own board and kicks off the
   // reset, and the reset transaction is a no-op for whoever calls it second.
   function checkForMatchEnd(room, myUid){
-    if (matchConcluded || !(room.status === 'starting' || room.status === 'playing')) return;
-    const entries = Object.entries(room.players || {});
-    if (entries.length < 2) return;
+    if (matchConcluded) return;
+    const live = room.status === 'starting' || room.status === 'playing';
+    // Someone else already reset the room for the rematch before this client
+    // saw the elimination that ended it (Firebase can coalesce the two
+    // updates) — the match is over either way, so conclude off the last
+    // live snapshot instead of waiting for an update that will never come.
+    const resetUnderUs = !live && matchStarted && room.status === 'waiting';
+    if (!live && !resetUnderUs) return;
+    const src = resetUnderUs ? (lastLiveRoom || room) : room;
+    const entries = Object.entries(src.players || {});
+    if (!resetUnderUs && entries.length < 2) return;
     const aliveIds = entries.filter(([id, p]) => p.connected && p.eliminatedAt == null).map(([id]) => id);
-    if (aliveIds.length > 1) return;
+    if (!resetUnderUs && aliveIds.length > 1) return;
 
     matchConcluded = true;
+    clearInterval(broadcastTimer);   // no stray board write may land on the reset room
+    queuedGarbage = []; updateGarbageWarning();
     if (window.game.state === 'playing' || window.game.state === 'paused') window.game.state = 'over';
-    const winnerId = aliveIds[0] || null;
-    const winnerName = winnerId ? ((room.players[winnerId] || {}).name || 'Someone') : null;
-    const title = winnerId == null ? 'Match over — no one left standing'
+    const winnerId = aliveIds.length === 1 ? aliveIds[0] : null;
+    const winnerName = winnerId ? (((src.players || {})[winnerId] || {}).name || 'Someone') : null;
+    const title = aliveIds.length > 1 ? 'Match over'
+      : winnerId == null ? 'Match over — no one left standing'
       : winnerId === myUid ? 'You win!' : `${winnerName} wins`;
     overlay(`<div class="title">${title}<small>Back to the lobby to play again…</small></div>`);
 
@@ -1412,22 +1429,35 @@ async function mpBoot(code){
   }
   window.addEventListener('beforeunload', unwatch);
 
-  function startCountdown(seed){
+  // Counts down to the room's shared startAt (server clock, see
+  // watchServerClock in lobby.js) rather than from whenever this page
+  // happened to finish loading — a slow laptop used to start a second or
+  // two behind everyone else. A client that arrives after startAt just
+  // starts straight away.
+  async function startCountdown(room){
     $$('#opponents').hidden = false;
-    let n = 3;
-    overlay(`<div class="count">${n}</div>`);
-    const step = () => {
-      n--;
-      if (n > 0){ overlay(`<div class="count">${n}</div>`); setTimeout(step, 420); }
-      else {
+    await clock.ready;
+    const startAt = room.startAt || (clock.now() + 1500);   // rooms started by an older lobby page have no startAt
+    let shown = null;
+    const tick = () => {
+      if (matchConcluded) return;
+      const left = startAt - clock.now();
+      if (left <= 0){
         overlay(null);
-        window.game.start('versus', seed);
+        window.game.start('versus', room.seed);
         window.game.on('lock', onLocalLock);
         window.game.on('over', onLocalOver);
         startBroadcastLoop(code, myUid);
+        return;
       }
+      const label = left > 1500 ? 'ready' : String(Math.ceil(left / 500));
+      if (label !== shown){
+        shown = label;
+        overlay(label === 'ready' ? `<div class="title">Get ready</div>` : `<div class="count">${label}</div>`);
+      }
+      setTimeout(tick, Math.min(40, left));
     };
-    setTimeout(step, 420);
+    tick();
   }
 
   // The one place garbage actually moves. Fires on every lock (see the
@@ -1447,10 +1477,10 @@ async function mpBoot(code){
         chunk.amount -= take; remaining -= take;
         if (chunk.amount === 0) queuedGarbage.shift();
       }
-      if (remaining > 0 && latestRoom){
+      if (remaining > 0 && latestRoom && !matchConcluded){
         const target = pickTarget(latestRoom, myUid);
         if (target){
-          sendGarbage(db, code, target, remaining);
+          sendAttack(db, code, matchId, target, myUid, [remaining]);
           window.FX.send(remaining);
           flashOpponent(target);         // and it lands visibly on whoever caught it
         }
@@ -1491,8 +1521,8 @@ async function mpBoot(code){
   }
 
   function startBroadcastLoop(code, uid){
-    setInterval(() => {
-      if (window.game.state !== 'playing' && window.game.state !== 'paused') return;
+    broadcastTimer = setInterval(() => {
+      if (matchConcluded || (window.game.state !== 'playing' && window.game.state !== 'paused')) return;
       const summary = boardSummary(window.game);
       const json = JSON.stringify(summary);
       if (json === lastSentJson) return;

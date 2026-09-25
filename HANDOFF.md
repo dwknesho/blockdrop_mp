@@ -70,11 +70,22 @@ trademark, and clones using the name get takedown notices.
 - ✅ **Opponent previews.** Small canvases built per opponent from the room's
   player list, redrawn from each other player's broadcast board on every
   Firebase update.
-- ✅ **Garbage lines.** `sendGarbage()` in `lobby.js` runs an **increment
-  transaction** on the target's `pendingGarbage` so simultaneous attacks from
-  two players both land. Receiving is a **claim-and-zero transaction**
-  (`consumeGarbage()`) so garbage can't be double-applied if it fires twice
-  before the zero-write is visible.
+- ✅ **Garbage lines.** `sendAttack()` in `lobby.js` files every attack as
+  its own `push()` child under `rooms/CODE/attacks/MATCHID/TARGETUID`
+  (`{from, lines}`), so simultaneous attacks from two players both land.
+  Receiving is a **claim-and-delete transaction** (`claimAttacks()`) so
+  garbage can't be double-applied if it fires twice before the delete is
+  visible. Scoping the inbox to a `matchId` (minted by `tryStartMatch`) is
+  what fixed "garbage at the very start of a round": the previous round's
+  last attack could still be in flight when the room was reset for the
+  rematch, and it used to survive into the next match as a stale
+  `pendingGarbage`. Now a late write can only reach the old match's inbox.
+  `tryStartMatch` and `resetForRematch` also rebuild player nodes from lobby
+  fields only (`name/slot/ready/connected`).
+- ✅ **Synced start.** `tryStartMatch` writes a shared `startAt` on the
+  server clock (`watchServerClock()` uses `.info/serverTimeOffset`); every
+  client counts its 3-2-1 down to that instant instead of to whenever its
+  own page finished loading.
 - ✅ **Targeting rule.** `pickTarget()` in `lobby.js` — tallest stack among
   connected, non-eliminated opponents, using each attacker's own latest
   synced view of the room; ties break on slot number so it's still a single
