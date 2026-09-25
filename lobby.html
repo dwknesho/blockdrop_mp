@@ -774,7 +774,8 @@ async function goToMatch(){
 function renderRoom(room, myName){
   if (!room) return;
   lastRoom = room;
-  const players = Object.entries(room.players || {}).sort((a,b) => a[1].slot - b[1].slot);
+  // Skip nameless stub nodes a late in-flight write can leave behind — see isRealPlayer() in lobby.js.
+  const players = Object.entries(room.players || {}).filter(([,p]) => p && p.name != null && p.slot != null).sort((a,b) => a[1].slot - b[1].slot);
   $('#playerList').innerHTML = players.map(([id,p]) => `
     <li><span><span class="dot ${p.connected ? 'on' : ''}"></span>${p.name}${id === uid ? ' (you)' : ''}</span>
     <span class="tag ${p.ready ? 'ready' : ''}">${p.connected ? (p.ready ? 'Ready' : 'Not ready') : 'Disconnected'}</span></li>`).join('');
