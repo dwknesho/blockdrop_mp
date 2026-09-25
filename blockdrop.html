@@ -435,10 +435,12 @@ const KICKS_180 = [[0,0],[0,1],[1,0],[-1,0],[0,-1]];
 
 // Lines of garbage sent, indexed by combo count (used later for multiplayer)
 const COMBO_ATTACK = [0,0,1,1,1,2,2,3,3,4,4,4,5];
-// tetr.io's "Surge": once a back-to-back streak reaches its 5th consecutive
-// difficult clear (displayed as "B2B x4"), each further consecutive clear
-// adds one more line on top of the flat B2B bonus, uncapped.
-const B2B_SURGE_STREAK = 5;
+// tetr.io's "Surge" (B2B charging): once the back-to-back chain reaches
+// "B2B x4" it starts storing a charge of 4 lines, +1 per further link,
+// uncapped. Nothing extra is sent while the chain lives — the whole charge
+// is released at once, in three segments, when a non-difficult clear breaks
+// the chain. Every B2B clear still gets the flat +1 on top.
+const SURGE_MIN = 4;
 
 // Rows of headroom at which the danger state starts creeping in. At 6 rows
 // left it is a faint hum; with the stack against the ceiling it is at full
@@ -468,8 +470,9 @@ class Game {
     this.hold = null; this.canHold = true;
     this.score = 0; this.lines = 0; this.level = 1; this.combo = -1; this.b2bCount = 0;
     this.pieces = 0; this.sent = 0; this.time = 0;
+    this.garbageCleared = 0; this.maxCombo = 0; this.maxB2B = 0;   // for the VS stat and the match summary
     this.gravAcc = 0; this.lockTimer = 0; this.lockResets = 0; this.lowestY = 0;
-    this.softDrop = false; this.cur = null; this.lastRotate = false; this.lastKick = 0;
+    this.softDrop = false; this.cur = null; this.lastRotate = false; this.lastKick = 0; this.hardDropping = false;
     this.state = 'ready';   // ready | playing | paused | over | won
   }
   // Seeded random numbers (mulberry32), so in multiplayer everyone can get the same piece order.
@@ -484,6 +487,9 @@ class Game {
   start(mode, seed){ this.prepare(mode, seed); this.go(); }
   pause(){ if (this.state === 'playing') this.state = 'paused'; }
   resume(){ if (this.state === 'paused') this.state = 'playing'; }
+  // The chain as players read it: the 2nd difficult clear in a row is "B2B x1".
+  b2bChain(){ return Math.max(0, this.b2bCount - 1); }
+  surgeCharge(){ const c = this.b2bChain(); return c >= SURGE_MIN ? c : 0; }
 
   fillQueue(){
     while (this.queue.length < 14){
@@ -515,6 +521,7 @@ class Game {
     if (this.collides(this.cur)){ this.gameOver('Blocked at the top'); return false; }
     if (!this.isGrounded()){ this.cur.y++; this.lowestY = this.cur.y; }
     if (this.mode === 'practice') this.saveSnapshot();
+    this.emit('spawn');
     return true;
   }
 
@@ -545,18 +552,22 @@ class Game {
 
   hardDrop(){
     if (this.state !== 'playing') return;
-    const y = this.ghostY(), d = y - this.cur.y;
+    const y = this.ghostY(), d = y - this.cur.y, fromY = this.cur.y;
     if (d > 0){ this.cur = {...this.cur, y}; this.lastRotate = false; }
     this.score += d * 2;
+    this.emit('harddrop', { type: this.cur.type, cells: cellsOf(this.cur), fromY, dist: d });
+    this.hardDropping = true;
     this.lock();
   }
 
   holdPiece(){
-    if (this.state !== 'playing' || !this.canHold) return;
+    if (this.state !== 'playing' || !this.canHold) return false;
     const t = this.cur.type;
     if (this.hold){ const h = this.hold; this.hold = t; this.spawn(h); }
     else { this.hold = t; this.spawn(); }
     this.canHold = false;
+    this.emit('hold', { type: t });
+    return true;
   }
 
   tick(dt){
@@ -606,21 +617,26 @@ class Game {
   }
 
   lock(){
-    const p = this.cur, tspin = this.detectTSpin();
-    const spin = tspin ? 'T' : this.detectSpin(), spinCells = spin ? cellsOf(p) : null;
+    const p = this.cur, tspin = this.detectTSpin(), hard = this.hardDropping;
+    this.hardDropping = false;
+    const cells = cellsOf(p);
+    const spin = tspin ? 'T' : this.detectSpin(), spinCells = spin ? cells : null;
     let allAbove = true;
-    for (const [x,y] of cellsOf(p)){ this.board[y][x] = p.type; if (y >= HIDDEN) allAbove = false; }
+    for (const [x,y] of cells){ this.board[y][x] = p.type; if (y >= HIDDEN) allAbove = false; }
     this.pieces++;
     const full = [];
     for (let y=0;y<ROWS;y++) if (this.board[y].every(c => c)) full.push(y);
+    const clearedRows = full.map(y => this.board[y].slice());   // what the cleared lines held, for the shatter effect
+    this.garbageCleared += clearedRows.filter(r => r.includes('G')).length;
     for (const y of full){ this.board.splice(y,1); this.board.unshift(Array(COLS).fill(null)); }
-    const atk = this.scoreClear(full, tspin);
+    const { atk, surge } = this.scoreClear(full, tspin);
     this.canHold = true;
     // Fires on every lock, clearing or not — multiplayer uses this (not
     // 'clear', which only fires when something was actually cleared) to
     // know precisely when to apply queued garbage vs. cancel it against an
-    // outgoing attack, with no polling/timing guesswork.
-    this.emit('lock', { attack: atk, cleared: full.length > 0 });
+    // outgoing attack, with no polling/timing guesswork. `surge` is the part
+    // of `attack` that is a released Surge charge (sent as three segments).
+    this.emit('lock', { attack: atk, surge, cleared: full.length > 0, rows: full, clearedRows, cells, type: p.type, hard });
     if (spin) this.emit('spin', { type: spin, tspin, cells: spinCells, lines: full.length });
     if (allAbove && full.length === 0){ this.gameOver('Locked above the board'); return; }
     if (this.mode === 'sprint' && this.lines >= 40){ this.state = 'won'; this.emit('won', {time:this.time}); return; }
@@ -641,34 +657,37 @@ class Game {
       name = ['','Single','Double','Triple','Quad'][n];
     }
     pts *= this.level;
-    let b2bNow = false, surge = 0, pc = false;
+    let b2bNow = false, surge = 0, b2bBroken = 0, pc = false;
+    const levelBefore = this.level;
     if (n > 0){
       this.combo++;
       const difficult = n === 4 || !!tspin;
       if (difficult){
         this.b2bCount++;
-        if (this.b2bCount > 1){
-          pts = Math.floor(pts*1.5); atk += 1; b2bNow = true;
-          if (this.b2bCount >= B2B_SURGE_STREAK){
-            surge = this.b2bCount - (B2B_SURGE_STREAK - 1);   // +1 at the 5th consecutive clear, +2 at the 6th, uncapped
-            atk += surge;
-          }
-        }
+        if (this.b2bCount > 1){ pts = Math.floor(pts*1.5); atk += 1; b2bNow = true; }
       } else {
+        // A plain clear breaks the chain — and releases whatever Surge it
+        // had charged (see SURGE_MIN above).
+        b2bBroken = this.b2bChain();
+        surge = this.surgeCharge();
         this.b2bCount = 0;
       }
       pts += 50 * this.combo * this.level;
       atk += COMBO_ATTACK[Math.min(this.combo, COMBO_ATTACK.length-1)];
       pc = this.board.every(row => row.every(c => !c));
       if (pc){ pts += 3500 * this.level; atk += 10; }
+      atk += surge;
       this.lines += n;
       if (this.mode === 'marathon' || this.mode === 'versus' || this.mode === 'practice') this.level = Math.min(20, Math.floor(this.lines/10) + 1);
+      this.maxCombo = Math.max(this.maxCombo, this.combo);
+      this.maxB2B = Math.max(this.maxB2B, this.b2bChain());
     } else {
       this.combo = -1;
     }
     this.score += pts; this.sent += atk;
-    if (n > 0 || tspin) this.emit('clear', {lines:n, rows, tspin, name, b2b:b2bNow, b2bCount:this.b2bCount, surge, combo:this.combo, pc, attack:atk});
-    return atk;
+    if (n > 0 || tspin) this.emit('clear', {lines:n, rows, tspin, name, b2b:b2bNow, b2bCount:this.b2bCount, chain:this.b2bChain(),
+      surgeCharge:this.surgeCharge(), surge, b2bBroken, combo:this.combo, pc, attack:atk, levelUp:this.level > levelBefore});
+    return { atk, surge };
   }
 
   // ---- Practice mode undo ----
@@ -677,7 +696,7 @@ class Game {
       board: this.board.map(r => r.slice()), queue: this.queue.slice(), rngState: this.rngState,
       hold: this.hold, canHold: this.canHold, cur: {...this.cur},
       score: this.score, lines: this.lines, level: this.level, combo: this.combo, b2bCount: this.b2bCount,
-      pieces: this.pieces, sent: this.sent,
+      pieces: this.pieces, sent: this.sent, garbageCleared: this.garbageCleared, maxCombo: this.maxCombo, maxB2B: this.maxB2B,
     });
     if (this.history.length > 1000) this.history.shift();
   }
@@ -692,7 +711,7 @@ class Game {
       board: h.board.map(r => r.slice()), queue: h.queue.slice(), rngState: h.rngState,
       hold: h.hold, canHold: h.canHold, cur: {...h.cur},
       score: h.score, lines: h.lines, level: h.level, combo: h.combo, b2bCount: h.b2bCount,
-      pieces: h.pieces, sent: h.sent,
+      pieces: h.pieces, sent: h.sent, garbageCleared: h.garbageCleared, maxCombo: h.maxCombo, maxB2B: h.maxB2B,
     });
     this.gravAcc = 0; this.lockTimer = 0; this.lockResets = 0; this.lowestY = this.cur.y; this.lastRotate = false;
     this.state = 'playing';
