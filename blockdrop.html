@@ -2385,7 +2385,9 @@ async function mpBoot(code){
       if (live) lastLiveRoom = room;
       if (!matchStarted && live){
         matchStarted = true;
-        matchId = room.matchId || null;
+        // A match started by an old cached lobby page has no matchId; the
+        // shared piece seed is just as unique per match, so scope to that.
+        matchId = room.matchId || ('s' + room.seed);
         startCountdown(room);
       }
       if (!opponentsBuilt && room.players && live){ buildOpponentPanels(room); opponentsBuilt = true; }
