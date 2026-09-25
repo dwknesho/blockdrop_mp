@@ -2649,17 +2649,26 @@ async function mpBoot(code){
       for (let x = 0; x < MCOLS; x++) row += g.board[y][x] || '0';
       rows.push(row);
     }
+    // Stack height (what the danger ring is built from) has to come from the
+    // LOCKED board only. Baking the falling piece into `rows` happens next,
+    // for rendering — but a fresh piece spawns near the top of the visible
+    // rows on every single placement, so measuring height after baking it in
+    // made an opponent's board register as nearly full to the ceiling the
+    // instant any piece spawned, including at the very start of the match
+    // with an empty board underneath it.
+    let topRow = MVISIBLE;
+    const emptyRow = '0'.repeat(MCOLS);
+    for (let y = 0; y < rows.length; y++) if (rows[y] !== emptyRow && y < topRow) topRow = y;
+    const height = MVISIBLE - topRow;
+
     if (g.cur && (g.state === 'playing' || g.state === 'paused')){
       for (const [x, y] of cellsOf(g.cur)){
         const ry = y - MHIDDEN;
         if (ry >= 0 && ry < rows.length && x >= 0 && x < MCOLS) rows[ry] = rows[ry].slice(0, x) + g.cur.type + rows[ry].slice(x + 1);
       }
     }
-    let topRow = MVISIBLE;
-    const emptyRow = '0'.repeat(MCOLS);
-    for (let y = 0; y < rows.length; y++) if (rows[y] !== emptyRow && y < topRow) topRow = y;
     return {
-      rows, height: MVISIBLE - topRow,
+      rows, height,
       hold: g.hold || null, next: g.queue.slice(0, 5),
       score: g.score, lines: g.lines, sent: g.sent,
       b2b: g.b2bChain(), sg: g.surgeCharge(), cb: Math.max(0, g.combo), cl: myClear,
