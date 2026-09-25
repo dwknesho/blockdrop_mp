@@ -10,9 +10,11 @@ trademark, and clones using the name get takedown notices.
 ## Files in this folder
 - **`blockdrop.html`** — the game. Self-contained for single-player (open it
   directly in a browser, no build step, no server needed). Internally split
-  into four parts, marked with comments: `ENGINE` (pure game logic, no DOM —
-  `// ENGINE START` / `// ENGINE END`), `RENDERER` (canvas drawing), `UI/INPUT`
-  (keyboard, menus, the main loop — all one classic `<script>`), and a fourth
+  into five parts, marked with comments: `ENGINE` (pure game logic, no DOM —
+  `// ENGINE START` / `// ENGINE END`), `RENDERER` (mino skins and canvas
+  drawing), `SOUND` (every sound effect, synthesized with Web Audio — there
+  are no audio files), `UI/INPUT` (settings, keybinds, layout, effects,
+  menus, the main loop — all one classic `<script>`), and a fifth
   `<script type="module">` at the bottom that only activates when the page is
   opened as `blockdrop.html?room=CODE` (i.e. via the lobby) — it syncs boards,
   sends/receives garbage, and reports eliminations over Firebase. That module
@@ -34,7 +36,29 @@ trademark, and clones using the name get takedown notices.
 - ✅ Three modes: Marathon (gravity ramps every 10 lines), 40-line Sprint,
   and Practice (no gravity, Ctrl+Z undoes the last placed piece — full
   history/replay support in `Game.saveSnapshot()` / `Game.undo()`).
-- ✅ Adjustable DAS/ARR/soft-drop speed, saved to `localStorage`.
+- ✅ Settings (tabbed dialog, saved to `localStorage` under
+  `blockdrop:settings`): DAS/ARR/soft-drop speed/DCD/"cancel DAS", custom
+  keybinds (stored as upper-cased `KeyboardEvent.code`, e.g. `KEYZ` — the
+  same format TETR.IO uses), skin (glossy / classic), ghost/grid/board
+  opacity, screen shake, board bounce, particles, SFX volume, danger
+  heartbeat, background picture.
+- ✅ **TETR.IO config import.** Drop the `.ttc` file TETR.IO exports
+  (Config → Export — it's plain JSON) anywhere on the page, or use the
+  button in Settings: `importTetrio()` converts handling from frames to ms,
+  copies the custom keybinds, SFX volume and video opacities, and shows a
+  toast of what was imported and what was skipped (safelock, IRS/IHS, music,
+  and `colorshadow` — the ghost is always white on purpose).
+- ✅ **Look & feel.** Glossy tetr.io-style minos (pre-rendered per colour and
+  size into `spriteCache`), white ghost, lock flash, hard-drop streak,
+  line-clear shards, board bounce. `layout()` picks one cell size (`--u`)
+  so the whole match fills the window — every size in the CSS is a multiple
+  of it. Danger is a pink→cherry "heartbeat" ring around the board (no text,
+  nothing drawn over the stack). B2B chain / combo / clear name callouts sit
+  under Hold (`makeCallouts()`), and the B2B badge stays up for the whole
+  chain. Stats show PPS, APM and VS (`rates()`).
+- ✅ **Surge (B2B charging), tetr.io style.** From B2B x4 the chain stores a
+  charge (4 lines, +1 per further link); a plain clear that breaks the chain
+  releases it all at once, sent as three segments (`splitSurge()`).
 - ✅ All-black theme, works in light/dark OS mode.
 - ✅ Multiplayer lobby: Firebase Realtime Database + Anonymous Auth. Room
   create/join/ready/start, with every known race condition handled via
@@ -59,17 +83,28 @@ trademark, and clones using the name get takedown notices.
   anonymously (same uid as the lobby, since Firebase Auth persists it),
   re-marks itself `connected` (the page navigation itself trips the lobby
   page's `onDisconnect`, so this has to happen again on the new page — see
-  `markConnected` in `lobby.js`), runs its own 3-2-1 countdown, then calls
+  `markConnected` in `lobby.js`), counts down to the room's shared `startAt`, then calls
   `Game.start('versus', room.seed)` — the existing seeded-RNG engine handles
   the rest untouched, aside from one line in `scoreClear()` so `'versus'`
   levels up like marathon does.
-- ✅ **Board broadcast.** Each client sends a compact summary (10-bit row
-  bitmasks + score/lines/stack height) via `updateBoard()` on a 100ms
-  `setInterval` (≈10/sec) — see `boardSummary()` in `blockdrop.html`. Skips
-  the write when nothing changed since the last tick.
-- ✅ **Opponent previews.** Small canvases built per opponent from the room's
-  player list, redrawn from each other player's broadcast board on every
-  Firebase update.
+- ✅ **Board broadcast.** Each client sends a compact summary (one string
+  of piece letters per row, hold/next, stack height, B2B/Surge/combo, the
+  latest clear name, its incoming-garbage meter, and the raw pieces/sent/
+  garbage-cleared/time numbers behind PPS/APM/VS) via `updateBoard()` on a
+  100ms `setInterval` (≈10/sec) — see `boardSummary()` in `blockdrop.html`.
+- ✅ **Opponent panels, tetr.io layout.** A 1v1 shows two equal full-size
+  boards side by side; with 3 players your board stays full size and the two
+  opponents sit beside it at `MULTI_SCALE` (60%). Each opponent panel is the
+  same markup as yours (hold, callouts, stats, board with meter and danger
+  ring, next), redrawn from their broadcast on every Firebase update.
+- ✅ **Garbage feel.** Attacks fly as orbs (`Orbs`, a full-page canvas) from
+  the sender's cleared rows to the target's garbage meter, and incoming ones
+  fly from the attacker's board into yours. Incoming chunks "charge" for
+  `GARBAGE_DELAY` (500ms, pale pink in the meter) before they can land, but
+  can be cancelled the whole time; at most 8 lines land per placement.
+- ✅ **Match summary.** When the match ends, everyone sees APM/PPS/VS/sent/
+  max combo/max B2B/time for every player, then returns to the room after
+  15s (or straight away with the button).
 - ✅ **Garbage lines.** `sendAttack()` in `lobby.js` files every attack as
   its own `push()` child under `rooms/CODE/attacks/MATCHID/TARGETUID`
   (`{from, lines}`), so simultaneous attacks from two players both land.
@@ -198,10 +233,13 @@ test, use two separate devices.
 2. Tab B: enter a different name, type that code, click **Join room**.
 3. Both tabs: click **Ready up** — should count down and drop into a synced
    board with live opponent previews.
-4. Clear some lines in one tab and confirm garbage lands on the other after
-   its next piece locks (not mid-fall).
-5. Top out in one tab and confirm the match declares a winner and both tabs
-   return to a fresh ready-up screen in the same room.
+4. Clear some lines in one tab and confirm the orbs fly across, the other
+   board's meter fills (pale pink, then red), and the garbage lands after
+   its next non-clearing piece locks (not mid-fall).
+5. Top out in one tab and confirm the match declares a winner, both tabs show
+   the stats summary, and both return to a fresh ready-up screen in the same
+   room. Then ready up again and confirm the new round starts with an empty
+   garbage meter (the old stale-garbage bug).
 
 ## What's already handled (see comments in `lobby.js`)
 - Two people joining the same room at the same instant never get assigned
