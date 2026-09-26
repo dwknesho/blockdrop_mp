@@ -453,8 +453,8 @@ body.versus .gMeter{display:block}   /* solo has nothing incoming */
 
       <section data-panel="look" hidden>
         <div class="setting">
-          <div class="top"><label for="skin">Block skin</label>
-            <select id="skin"><option value="glossy">Glossy</option><option value="classic">Classic (flat)</option></select></div>
+          <div class="top"><label for="skin">Block skin</label><select id="skin"></select></div>
+          <canvas id="skinPreview" width="560" height="96" style="width:100%;height:auto;margin-top:8px;border-radius:6px"></canvas>
         </div>
         <div class="setting">
           <div class="top"><label for="ghost">Ghost piece opacity</label><output id="ghostV"></output></div>
@@ -885,13 +885,19 @@ class Game {
 // original flat block with its original colours.
 const GLOSSY_COLORS  = { I:'#2fd6ea', O:'#ffd23f', T:'#b35cf2', S:'#5fdb5a', Z:'#ff4f6e', J:'#4f6fff', L:'#ff9433', G:'#8a8fa0' };
 const CLASSIC_COLORS = { I:'#35d0f0', O:'#ffc93c', T:'#b25ce8', S:'#4fd46a', Z:'#ff5468', J:'#4a78ff', L:'#ff9a3c', G:'#6f7894' };
+// TETR.IO's own minos are noticeably more muted than the candy palette
+// above — they sit back so the stack reads as shape first, colour second.
+const TETRIO_COLORS  = { I:'#3fcbd9', O:'#e0c13c', T:'#a555d4', S:'#4cc94c', Z:'#d8484a', J:'#5060d8', L:'#e08b3c', G:'#6d6d6d' };
+// The minimal skin goes the other way: flat, vivid, no shading at all, with
+// a clear gap between cells so the grid does the separating.
+const MINIMAL_COLORS = { I:'#22e0f0', O:'#ffd400', T:'#e84ae8', S:'#35e05a', Z:'#ff4d5e', J:'#3d6bff', L:'#ff8c1a', G:'#565c68' };
 let COLORS = GLOSSY_COLORS;
 const DEAD_COLOR = '#4a5270', HOLD_USED = '#5a6380';
 const CS = 30, BW = COLS*CS, BH = (VISIBLE+2)*CS, OFF = HIDDEN-2;
 const $ = s => document.querySelector(s);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 // Look settings the renderer reads every frame; applyLook() in the UI keeps them in sync.
-let skinName = 'glossy', ghostAlpha = .5, gridAlpha = .09, particleAmt = 1;
+let skinName = 'glossy', skinRadius = .13, ghostAlpha = .5, gridAlpha = .09, particleAmt = 1;
 
 // Canvases are drawn in fixed "logical" units (the board is always 300x660,
 // one cell = 30) but their backing store is sized to the element's real
@@ -967,13 +973,58 @@ function paintClassic(c, S, col){
   c.fillStyle = 'rgba(255,255,255,.25)'; c.fillRect(u, u, S - 2*u, Math.max(2*u, S*.16));
   c.fillStyle = 'rgba(0,0,0,.22)'; c.fillRect(u, S - u - S*.14, S - 2*u, S*.14);
 }
+// TETR.IO's default mino: a nearly-square tile that fills its cell, a gentle
+// top-to-bottom gradient, a bright lip along the top edge and a dark one
+// along the bottom, and a thin dark outline so neighbouring minos stay
+// readable as separate blocks. Much flatter than the glossy skin.
+function paintTetrio(c, S, col, garbage){
+  const m = Math.max(.5, S*.02), x = m, w = S - 2*m, r = S*.06;
+  const lip = Math.max(1, S*.1);
+  const g = c.createLinearGradient(0, x, 0, x + w);
+  if (garbage){ g.addColorStop(0, shade(col, .1)); g.addColorStop(1, shade(col, -.3)); }
+  else { g.addColorStop(0, shade(col, .14)); g.addColorStop(.55, col); g.addColorStop(1, shade(col, -.18)); }
+  rrect(c, x, x, w, w, r); c.fillStyle = g; c.fill();
+  c.save(); c.clip();
+  c.fillStyle = garbage ? 'rgba(255,255,255,.14)' : 'rgba(255,255,255,.3)';
+  c.fillRect(x, x, w, lip);
+  c.fillStyle = 'rgba(0,0,0,.26)';
+  c.fillRect(x, x + w - lip*.8, w, lip*.8);
+  if (garbage){   // a plain notch in the middle, the way TETR.IO marks garbage
+    c.fillStyle = 'rgba(0,0,0,.28)';
+    c.fillRect(x + w*.28, x + w*.42, w*.44, Math.max(1.5, w*.16));
+  }
+  c.restore();
+  c.lineWidth = Math.max(.8, S*.035); c.strokeStyle = 'rgba(0,0,0,.5)';
+  rrect(c, x + .5, x + .5, w - 1, w - 1, r); c.stroke();
+}
+// The minimal skin: one flat colour, no gradient, no bevel, no outline —
+// just a square with an honest gap around it. Garbage is the only thing
+// that gets a marking, so it can still be told apart at a glance.
+function paintMinimal(c, S, col, garbage){
+  const m = Math.max(.75, S*.08), x = m, w = S - 2*m, r = S*.04;
+  rrect(c, x, x, w, w, r);
+  c.fillStyle = garbage ? shade(col, -.15) : col; c.fill();
+  if (garbage){
+    c.fillStyle = 'rgba(255,255,255,.22)';
+    c.fillRect(x + w*.26, x + w*.44, w*.48, Math.max(1.5, w*.12));
+  }
+}
+// Every skin is a palette, a corner radius (the ghost piece matches it) and
+// a paint function for one mino. Adding a skin here is enough — the
+// settings dropdown is built from this.
+const SKINS = {
+  glossy:  { label: 'Glossy',          colors: GLOSSY_COLORS,  radius: .13, paint: paintGlossy },
+  tetrio:  { label: 'TETR.IO',         colors: TETRIO_COLORS,  radius: .06, paint: paintTetrio },
+  minimal: { label: 'TETR.IO minimal', colors: MINIMAL_COLORS, radius: .04, paint: paintMinimal },
+  classic: { label: 'Classic (flat)',  colors: CLASSIC_COLORS, radius: 0,   paint: paintClassic },
+};
+const skinOf = name => SKINS[name] || SKINS.glossy;
 function mino(col, px, garbage){
   const key = skinName + col + (garbage ? 'g' : '') + px;
   let s = spriteCache.get(key);
   if (s) return s;
   s = document.createElement('canvas'); s.width = s.height = px;
-  const c = s.getContext('2d');
-  if (skinName === 'classic') paintClassic(c, px, col); else paintGlossy(c, px, col, garbage);
+  skinOf(skinName).paint(s.getContext('2d'), px, col, !!garbage);
   spriteCache.set(key, s);
   return s;
 }
@@ -984,7 +1035,7 @@ function drawCell(c, x, y, s, color, garbage){
 // The ghost is always plain white, whatever the piece — a coloured ghost
 // competes with the stack for attention. Opacity comes from settings.
 function drawGhost(c, x, y, s){
-  rrect(c, x + 2, y + 2, s - 4, s - 4, skinName === 'classic' ? 0 : s*.12);
+  rrect(c, x + 2, y + 2, s - 4, s - 4, s * skinRadius);
   c.fillStyle = `rgba(255,255,255,${ghostAlpha * .45})`; c.fill();
   c.strokeStyle = `rgba(255,255,255,${Math.min(1, .35 + ghostAlpha * .9)})`; c.lineWidth = 1.8; c.stroke();
 }
@@ -1472,9 +1523,10 @@ const saveSettings = () => store.set('settings', settings);
 game.sdf = settings.sdf;
 
 function applyLook(){
-  const skin = settings.skin === 'classic' ? 'classic' : 'glossy';
+  const skin = SKINS[settings.skin] ? settings.skin : 'glossy';
   if (skin !== skinName){ skinName = skin; spriteCache.clear(); }
-  COLORS = skin === 'classic' ? CLASSIC_COLORS : GLOSSY_COLORS;
+  COLORS = skinOf(skin).colors;
+  skinRadius = skinOf(skin).radius;
   ghostAlpha = settings.ghost / 100;
   gridAlpha = settings.grid / 100 * .35;
   particleAmt = settings.particles / 100;
@@ -2138,15 +2190,29 @@ function applySettings(){ game.sdf = settings.sdf; applyLook(); applyBgDarkness(
 function syncSettingsUI(){
   for (const [k,f] of RANGE_FIELDS){ $('#'+k).value = settings[k]; $('#'+k+'V').textContent = f(settings[k]); }
   for (const k of CHECK_FIELDS) $('#'+k).checked = !!settings[k];
-  $('#skin').value = settings.skin;
+  $('#skin').value = skinName;
+  drawSkinPreview();
   renderBgSwatches(); renderBinds();
+}
+// One of each piece in the chosen skin, so you can see what you're picking
+// without closing the dialog.
+function drawSkinPreview(){
+  const cv = $('#skinPreview'); if (!cv) return;
+  const c = cv.getContext('2d');
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  c.clearRect(0, 0, cv.width, cv.height);
+  c.fillStyle = '#000'; c.fillRect(0, 0, cv.width, cv.height);
+  c.__k = 1;
+  const types = ['I','O','T','S','Z','J','L','G'], s = 48, gap = (cv.width - types.length*s) / (types.length + 1);
+  types.forEach((t, i) => drawCell(c, gap + i*(s + gap), (cv.height - s)/2, s, COLORS[t], t === 'G'));
 }
 for (const [k,f] of RANGE_FIELDS){
   $('#'+k).addEventListener('input', e => { settings[k] = +e.target.value; $('#'+k+'V').textContent = f(settings[k]);
     applySettings(); saveSettings(); });
 }
 for (const k of CHECK_FIELDS) $('#'+k).addEventListener('change', e => { settings[k] = e.target.checked; saveSettings(); if (k === 'heartbeat') FX.reset(); });
-$('#skin').addEventListener('change', e => { settings.skin = e.target.value; applyLook(); saveSettings(); });
+$('#skin').innerHTML = Object.entries(SKINS).map(([k, s]) => `<option value="${k}">${esc(s.label)}</option>`).join('');
+$('#skin').addEventListener('change', e => { settings.skin = e.target.value; applyLook(); drawSkinPreview(); saveSettings(); SFX.lock(0); });
 $('#sfx').addEventListener('change', () => { SFX.unlock(); SFX.lock(0); });   // a sample at the new volume
 $('#sfxTest').addEventListener('click', () => {
   SFX.unlock();
@@ -2502,6 +2568,17 @@ async function mpBoot(code){
   // starts straight away.
   async function startCountdown(room){
     $$('#opponents').hidden = false;
+    // Lay the real, seeded piece order out NOW, not at GO. Since page load
+    // the Next panel has been showing the queue from `new Game()`'s
+    // throwaway random seed, so preparing only at GO visibly swapped the
+    // pieces out from under you the instant the match began (and only
+    // "sometimes" looked wrong, since a random first piece matches the real
+    // one about 1 in 7 times). prepare() leaves the game in 'ready' with no
+    // piece on the board — it just fixes the queue — and go() below starts it.
+    window.game.prepare('versus', room.seed);
+    FX.reset(); myCallouts.reset();
+    window.game.on('lock', onLocalLock);
+    window.game.on('over', onLocalOver);
     await clock.ready;
     const startAt = room.startAt || (clock.now() + 1500);   // rooms started by an older lobby page have no startAt
     let shown = null;
@@ -2511,9 +2588,7 @@ async function mpBoot(code){
       if (left <= 0){
         overlay(null);
         SFX.countdown(0);
-        window.game.start('versus', room.seed);
-        window.game.on('lock', onLocalLock);
-        window.game.on('over', onLocalOver);
+        window.game.go();   // queue was already fixed from the shared seed above
         startBroadcastLoop();
         return;
       }

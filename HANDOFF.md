@@ -39,7 +39,7 @@ trademark, and clones using the name get takedown notices.
 - ✅ Settings (tabbed dialog, saved to `localStorage` under
   `blockdrop:settings`): DAS/ARR/soft-drop speed/DCD/"cancel DAS", custom
   keybinds (stored as upper-cased `KeyboardEvent.code`, e.g. `KEYZ` — the
-  same format TETR.IO uses), skin (glossy / classic), ghost/grid/board
+  same format TETR.IO uses), block skin, ghost/grid/board
   opacity, screen shake, board bounce, particles, SFX volume, danger
   heartbeat, background picture.
 - ✅ **TETR.IO config import.** Drop the `.ttc` file TETR.IO exports
@@ -48,8 +48,15 @@ trademark, and clones using the name get takedown notices.
   copies the custom keybinds, SFX volume and video opacities, and shows a
   toast of what was imported and what was skipped (safelock, IRS/IHS, music,
   and `colorshadow` — the ghost is always white on purpose).
-- ✅ **Look & feel.** Glossy tetr.io-style minos (pre-rendered per colour and
-  size into `spriteCache`), white ghost, lock flash, hard-drop streak,
+- ✅ **Block skins.** Four, all in the `SKINS` registry in the renderer —
+  `glossy` (default), `tetrio` (muted palette, flat tile with a bright top
+  lip and dark bottom), `minimal` (flat vivid squares with a gap, no
+  shading) and `classic` (the original flat look). Each entry is a palette,
+  a corner radius (the ghost matches it) and a paint function; adding one
+  there is enough, since the Settings dropdown and its live preview build
+  themselves from the registry. Sprites are pre-rendered per skin/colour/
+  size into `spriteCache`, which `applyLook()` clears on a skin change.
+- ✅ **Look & feel.** White ghost, lock flash, hard-drop streak,
   line-clear shards, board bounce. `layout()` picks one cell size (`--u`)
   so the whole match fills the window — every size in the CSS is a multiple
   of it. Danger is a pink→cherry "heartbeat" ring around the board (no text,
