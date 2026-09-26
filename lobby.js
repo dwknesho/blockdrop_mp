@@ -8,13 +8,17 @@
 // ============================================================================
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
 import {
-  getDatabase, ref, runTransaction, onValue, onDisconnect, set, get, off, serverTimestamp
+  getDatabase, ref, runTransaction, onValue, onDisconnect, set, get, off, serverTimestamp, push, update
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-database.js";
 import {
   getAuth, signInAnonymously, onAuthStateChanged
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 
 const MAX_PLAYERS = 3;
+// How far ahead of "everyone is ready" the match's shared GO moment is set.
+// Covers the lobby -> game page load plus a 3-2-1, so a slower laptop still
+// arrives before the countdown ends instead of starting behind everyone.
+const MATCH_START_DELAY = 4500;
 // No 0/O or 1/I — those two look identical in most fonts and cause mis-typed room codes.
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
@@ -38,6 +42,29 @@ export function randomCode(len = 4){
   let s = '';
   for (let i = 0; i < len; i++) s += CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)];
   return s;
+}
+
+// Everything a player node picks up DURING a match (their board broadcast,
+// elimination time, the old pendingGarbage counter). None of it may survive
+// into the next round — see tryStartMatch() for what went wrong when it did.
+function lobbyFields(p){
+  return { name: p.name, slot: p.slot, ready: !!p.ready, connected: !!p.connected };
+}
+// A late in-flight write (a board broadcast, say) that lands after its
+// player already left recreates a stub node with no name or slot. Those are
+// never real players, so they're dropped wherever the room is rebuilt.
+const isRealPlayer = p => p && p.name != null && p.slot != null;
+
+// --- Hazard: laptop clocks disagree by seconds, so "start at 12:00:05" in
+// local time would start everyone at a different moment. Firebase measures
+// each client's offset from the SERVER clock; adding it gives every client
+// the same timeline to count down against. ---
+export function watchServerClock(db){
+  let offset = 0;
+  const ready = new Promise(resolve => {
+    onValue(ref(db, '.info/serverTimeOffset'), snap => { offset = snap.val() || 0; resolve(); });
+  });
+  return { now: () => Date.now() + offset, ready };
 }
 
 // --- Hazard: room-code collision. Two people could generate the same code
@@ -70,7 +97,9 @@ export async function joinRoom(db, code, uid, name){
     // Build a NEW object rather than mutating `current` in place — same
     // reason as tryStartMatch()'s comment above: mutating the transaction's
     // input can stop the SDK's before/after diff from seeing a real change.
-    if (current[uid]) return { ...current, [uid]: { ...current[uid], connected: true } };   // rejoin, same slot
+    // Rejoin, same slot — keeping only the lobby fields, so nothing from a
+    // finished match (board, eliminatedAt, stale garbage) rides along.
+    if (current[uid]) return { ...current, [uid]: { ...lobbyFields(current[uid]), connected: true } };
     const taken = new Set(Object.values(current).map(p => p.slot));
     let slot = -1;
     for (let i = 0; i < MAX_PLAYERS; i++) if (!taken.has(i)) { slot = i; break; }
@@ -146,22 +175,43 @@ export async function tryStartMatch(db, code){
   // call (detaching right after the first snapshot lets the cache go cold
   // again immediately, reproducing the same bug). So: attach, wait for one
   // real snapshot, transact while still attached, then detach. ---
+  const clock = watchServerClock(db);
   let unsub;
-  await new Promise(resolve => { unsub = onValue(roomRef, () => resolve()); });
+  await Promise.all([clock.ready, new Promise(resolve => { unsub = onValue(roomRef, () => resolve()); })]);
   try {
     const result = await runTransaction(roomRef, room => {
       if (!room || room.status !== 'waiting') return undefined;
-      const players = Object.values(room.players || {});
-      if (players.length < 2 || !players.every(p => p.ready)) return undefined;
+      const players = {};
+      for (const [id, p] of Object.entries(room.players || {})) if (isRealPlayer(p)) players[id] = lobbyFields(p);
+      const list = Object.values(players);
+      if (list.length < 2 || !list.every(p => p.ready)) return undefined;
+      // --- Hazard (the "garbage at the very start of a round" bug): the
+      // previous round's last attack can still be in flight when the room
+      // gets reset — the loser's client resets the instant it tops out,
+      // while the winner, ~100ms behind, may be mid-combo. That write then
+      // landed on the freshly reset room, and because this used to copy
+      // `...room` and every player node forward untouched, it survived all
+      // the way into the next match and hit on the first piece. Two fixes:
+      // (1) the room is rebuilt here with ONLY lobby fields, and without the
+      //     old `attacks` node at all;
+      // (2) every match gets its own matchId, and attacks are filed under
+      //     it (see sendAttack) — so even a write that lands later still can
+      //     only ever reach the old match's inbox, which nobody reads. ---
       // Return a NEW object rather than mutating `room` in place — the SDK
       // diffs the before/after values to decide what to actually commit
       // and broadcast, and mutating the input can make that diff see no
       // change.
+      const { attacks, ...rest } = room;
       return {
-        ...room,
+        ...rest,
+        players,
         status: 'starting',
         seed: Math.floor(Math.random() * 2 ** 32),
+        matchId: randomCode(8),
         startingAt: Date.now(),
+        // One shared GO moment on the server's clock, so every player's
+        // 3-2-1 ends at the same instant however fast their page loaded.
+        startAt: clock.now() + MATCH_START_DELAY,
       };
     });
     return result.committed;
@@ -213,24 +263,31 @@ export function updateBoard(db, code, uid, summary){
 }
 
 // --- Hazard: two attackers targeting the same opponent at the same instant
-// could both read "pendingGarbage: 0" and both write "2", losing one attack.
-// Fixed with an increment transaction: each attacker's write is applied on
-// top of whatever the field's value is at commit time, so both land. ---
-export function sendGarbage(db, code, targetUid, amount){
-  if (!(amount > 0)) return Promise.resolve();
-  return runTransaction(ref(db, `rooms/${code}/players/${targetUid}/pendingGarbage`), current => (current || 0) + amount);
+// must both land. Every attack is its own push() child (push keys are
+// unique and time-ordered), so there's no shared counter to race on at all.
+// Each chunk keeps who sent it, so the receiver can animate it flying in
+// from the right board. Attacks live under rooms/CODE/attacks/MATCHID/UID —
+// scoped to one match, see tryStartMatch() for why. ---
+export function sendAttack(db, code, matchId, targetUid, fromUid, chunks){
+  const list = (chunks || []).filter(n => n > 0);
+  if (!list.length || !matchId || !targetUid) return Promise.resolve();
+  const inbox = ref(db, `rooms/${code}/attacks/${matchId}/${targetUid}`);
+  const batch = {};
+  for (const lines of list) batch[push(inbox).key] = { from: fromUid, lines };
+  return update(inbox, batch);   // one multi-child write: all chunks arrive together, in order
 }
 
-// Claim whatever garbage is currently queued and zero it out, atomically, so
-// a slow client can't apply the same lines twice if this is called again
-// before the zero-write is visible yet.
-export async function consumeGarbage(db, code, uid){
-  let taken = 0;
-  await runTransaction(ref(db, `rooms/${code}/players/${uid}/pendingGarbage`), current => {
-    taken = current || 0;
-    return 0;
+// Claim everything in this player's inbox and delete it, atomically, so a
+// slow client can't apply the same attack twice if this is called again
+// before the delete is visible yet. Returns the chunks oldest first.
+export async function claimAttacks(db, code, matchId, uid){
+  let taken = null;
+  const result = await runTransaction(ref(db, `rooms/${code}/attacks/${matchId}/${uid}`), current => {
+    taken = current;   // overwritten on every retry — only the committed run counts
+    return null;
   });
-  return taken;
+  if (!result.committed || !taken) return [];
+  return Object.keys(taken).sort().map(k => taken[k]).filter(a => a && a.lines > 0);
 }
 
 // --- Hazard: "who topped out first" decides elimination order, but laptop
@@ -271,10 +328,11 @@ export async function resetForRematch(db, code){
       if (!room || room.status === 'waiting') return undefined;
       const players = {};
       for (const [uid, p] of Object.entries(room.players || {})){
-        if (!p.connected) continue;   // dropped mid-match and never came back — don't carry a ghost into the rematch lobby
-        players[uid] = { name: p.name, slot: p.slot, connected: p.connected, ready: false };
+        if (!isRealPlayer(p) || !p.connected) continue;   // dropped mid-match and never came back — don't carry a ghost into the rematch lobby
+        players[uid] = { ...lobbyFields(p), ready: false };
       }
       if (Object.keys(players).length === 0) return null;   // nobody left — delete the room instead of resetting to an empty one
+      // Deliberately rebuilt from scratch: no seed, matchId or attacks carry over.
       return { status: 'waiting', createdAt: room.createdAt, players };
     });
     return result.committed;
